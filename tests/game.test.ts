@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Game } from '../src/sim/Game.ts';
 import { Material } from '../src/core/types.ts';
-import { GRACE_SECONDS, SURVEY_COST } from '../src/core/config.ts';
+import { GRACE_SECONDS, MAX_ROUTE_LENGTH, SURVEY_COST } from '../src/core/config.ts';
 import { flushJobs, giveMoney, run } from './helpers.ts';
 
 const Z = 16;
@@ -284,5 +284,54 @@ describe('工期', () => {
     g.dig(44, 18, Z);
     expect(g.jobs).toHaveLength(2);
     expect(g.currentJob?.label).toContain('19');
+  });
+});
+
+describe('尾根の越え方 (トレードオフ)', () => {
+  it('橋を架けただけでは、尾根を回り込む経路が長すぎて開通しない', () => {
+    const g = gameWithMoney();
+    buildTruss(g);
+    const r = g.route();
+    expect(r.reachable).toBe(true); // 歩いて行くことはできる
+    expect(r.connected).toBe(false); // が、道路として長すぎる
+    expect(r.length).toBeGreaterThan(MAX_ROUTE_LENGTH);
+  });
+
+  it('尾根を貫けば経路が一気に短くなり、開通する', () => {
+    const g = gameWithMoney();
+    buildTruss(g);
+    for (let x = 30; x <= 49; x++) g.dig(x, 20, Z);
+    flushJobs(g, 400);
+    for (const c of [...g.tunnels.cells.values()]) {
+      const id = c.required >= 3 ? 'steel' : c.required === 2 ? 'concrete' : c.required === 1 ? 'timber' : null;
+      if (id) g.setSupport(c.x, c.y, c.z, id);
+    }
+    flushJobs(g, 400);
+    const r = g.route();
+    expect(r.connected).toBe(true);
+    expect(r.length).toBeLessThan(MAX_ROUTE_LENGTH);
+  });
+
+  it('破砕帯を避けて横にずらして掘ると、支保が要らなくなる代わりに経路が伸びる', () => {
+    const dig = (z: number): { weak: number; length: number } => {
+      const g = gameWithMoney();
+      buildTruss(g);
+      for (let x = 30; x <= 49; x++) g.dig(x, 20, z);
+      flushJobs(g, 400);
+      let weak = 0;
+      for (const c of [...g.tunnels.cells.values()]) {
+        const id = c.required >= 3 ? 'steel' : c.required === 2 ? 'concrete' : c.required === 1 ? 'timber' : null;
+        if (c.required >= 2) weak++;
+        if (id) g.setSupport(c.x, c.y, c.z, id);
+      }
+      flushJobs(g, 400);
+      return { weak, length: g.route().length };
+    };
+    const direct = dig(Z);
+    const detour = dig(10);
+    expect(direct.weak).toBeGreaterThan(0); // 破砕帯を突っ切る
+    expect(detour.weak).toBe(0); // 岩盤を狙う
+    expect(detour.length).toBeGreaterThan(direct.length); // その代わり遠回り
+    expect(detour.length).toBeLessThanOrEqual(MAX_ROUTE_LENGTH);
   });
 });

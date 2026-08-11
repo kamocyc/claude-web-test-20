@@ -85,3 +85,17 @@ describe('接続判定', () => {
     expect(findRoute(q(w), { x: 0, y: 5, z: 1 }, { x: 11, y: 5, z: 1 }).connected).toBe(true);
   });
 });
+
+describe('経路長の上限', () => {
+  it('遠回りしすぎると「到達はできるが道路にならない」', () => {
+    const w = flat(20);
+    const near = findRoute(q(w), { x: 0, y: 5, z: 1 }, { x: 19, y: 5, z: 1 }, 30);
+    expect(near.reachable).toBe(true);
+    expect(near.connected).toBe(true);
+
+    const far = findRoute(q(w), { x: 0, y: 5, z: 1 }, { x: 19, y: 5, z: 1 }, 10);
+    expect(far.reachable).toBe(true);
+    expect(far.connected).toBe(false); // 遠回りにも値段がつく
+    expect(far.length).toBe(20);
+  });
+});

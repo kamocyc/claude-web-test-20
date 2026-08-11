@@ -11,6 +11,7 @@ import {
   FOUNDATION_NAMES,
   GOAL_CELL,
   GRACE_SECONDS,
+  MAX_ROUTE_LENGTH,
   SINKHOLE_COVER,
   START_CELL,
   SUPPORTS,
@@ -87,6 +88,9 @@ export class Game {
   private dirtyColumns = new Set<number>();
   /** 直近の接続判定の結果 (毎 tick 更新は重いので間引く) */
   routeConnected = false;
+  /** 歩いて到達はできるが、道路として長すぎる状態を区別する */
+  routeReachable = false;
+  routeLength = 0;
   private routeTimer = 0;
 
   readonly start: Cell;
@@ -118,11 +122,15 @@ export class Game {
   }
 
   checkRoute(): boolean {
-    return findRoute(this.routeQuery(), this.start, this.goal).connected;
+    return this.route().connected;
+  }
+
+  route(): ReturnType<typeof findRoute> {
+    return findRoute(this.routeQuery(), this.start, this.goal, MAX_ROUTE_LENGTH);
   }
 
   routePath(): Cell[] {
-    return findRoute(this.routeQuery(), this.start, this.goal).path;
+    return this.route().path;
   }
 
   /** プレイヤーに見える地質。未調査なら null。 */
@@ -431,7 +439,10 @@ export class Game {
     this.routeTimer -= dt;
     if (this.routeTimer <= 0) {
       this.routeTimer = 0.4;
-      this.routeConnected = this.checkRoute();
+      const r = this.route();
+      this.routeConnected = r.connected;
+      this.routeReachable = r.reachable;
+      this.routeLength = r.length;
     }
 
     if (this.routeConnected && this.board.count === 0 && this.jobs.length === 0) {

@@ -1,0 +1,13 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-lcd-text'] });
+const p = await b.newPage({ viewport: { width: 1440, height: 860 }, deviceScaleFactor: 1 });
+const errs: string[] = [];
+p.on('console', m => { if (m.type()==='error') errs.push(m.text()); });
+p.on('pageerror', e => errs.push('PAGEERROR: '+e.message));
+await p.goto('http://127.0.0.1:4173/', { waitUntil: 'networkidle' });
+await p.waitForFunction(() => (globalThis as any).__game !== undefined, null, { timeout: 20000 });
+await p.waitForTimeout(2500);
+console.log('state', JSON.stringify(await p.evaluate(() => (globalThis as any).__game.state())));
+await p.screenshot({ path: process.argv[2] ?? '/tmp/shot.png' });
+console.log('errors:', errs.slice(0,10));
+await b.close();

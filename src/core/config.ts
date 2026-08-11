@@ -166,7 +166,7 @@ export const MAX_SINK = 0.45;
 
 // ---------------------------------------------------------------- 調査と予算
 
-export const START_BUDGET = 26000;
+export const START_BUDGET = 15000;
 /** ボーリング1本の費用。縦一列だけ地層が見える。 */
 export const SURVEY_COST = 260;
 /** 撤去の費用(返金はしない)。 */
@@ -174,6 +174,13 @@ export const DEMOLISH_COST = 15;
 
 /** ミッション達成に必要な「ハザード無しで接続が保たれている」秒数。 */
 export const WIN_HOLD_SECONDS = 3;
+
+/**
+ * 道路として認められる経路の最大マス数。
+ * これが無いと「遠回りはタダ」になってしまい、トンネルも切土も選ぶ理由が消える。
+ * 遠回りにも値段をつけるための、たった1つの数字。
+ */
+export const MAX_ROUTE_LENGTH = 74;
 
 // ---------------------------------------------------------------- 表示
 
@@ -185,11 +192,11 @@ export const COLORS = {
 } as const;
 
 /** 未調査の地中はのっぺりした無彩色。 */
-export const UNKNOWN_COLOR = 0x55555a;
+export const UNKNOWN_COLOR = 0x3c3f46;
 /** 地表(草)の色。地質ビューでは使わない。 */
 export const GRASS_COLOR = 0x5f7a4a;
 export const WATER_COLOR = 0x2f6f9e;
 
 /** 地質ビューのトランジション秒。 */
-export const GEO_FADE = 0.35;
-export const GEO_OPACITY = 0.3;
+export const GEO_FADE = 0.45;
+export const GEO_OPACITY = 0.82;

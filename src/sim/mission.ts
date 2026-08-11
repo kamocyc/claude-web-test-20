@@ -31,18 +31,28 @@ function standableNear(q: RouteQuery, x: number, y: number, z: number): number |
 }
 
 export interface RouteResult {
+  /** 段差1で歩いて到達できるか */
+  reachable: boolean;
+  /** 到達でき、かつ道路として使える長さに収まっているか */
   connected: boolean;
+  /** 経路のマス数 */
+  length: number;
   /** 見つかった経路(デバッグ表示・演出用)。connected が false なら空 */
   path: Cell[];
   /** 到達できたセル数。進捗の目安 */
   visited: number;
 }
 
-/** START から GOAL まで、段差1で歩いて行けるか。 */
-export function findRoute(q: RouteQuery, start: Cell, goal: Cell): RouteResult {
+/**
+ * START から GOAL まで、段差1で歩いて行けるか。
+ *
+ * 「行ければ何でもいい」にすると、遠回りがタダになってトンネルも切土も要らなくなる。
+ * 道路として使える長さに上限を置くことで、遠回りにもきちんと値段がつく。
+ */
+export function findRoute(q: RouteQuery, start: Cell, goal: Cell, maxLength = Infinity): RouteResult {
   const { world } = q;
   const startY = standableNear(q, start.x, start.y, start.z);
-  if (startY === null) return { connected: false, path: [], visited: 0 };
+  if (startY === null) return { reachable: false, connected: false, length: 0, path: [], visited: 0 };
 
   const key = (x: number, y: number, z: number): number => (x * world.sy + y) * world.sz + z;
   const cameFrom = new Map<number, number>();
@@ -81,7 +91,7 @@ export function findRoute(q: RouteQuery, start: Cell, goal: Cell): RouteResult {
     queue = next;
   }
 
-  if (goalKey < 0) return { connected: false, path: [], visited: seen.size };
+  if (goalKey < 0) return { reachable: false, connected: false, length: 0, path: [], visited: seen.size };
 
   const path: Cell[] = [];
   let k: number | undefined = goalKey;
@@ -95,5 +105,11 @@ export function findRoute(q: RouteQuery, start: Cell, goal: Cell): RouteResult {
     k = cameFrom.get(k);
   }
   path.reverse();
-  return { connected: true, path, visited: seen.size };
+  return {
+    reachable: true,
+    connected: path.length <= maxLength,
+    length: path.length,
+    path,
+    visited: seen.size,
+  };
 }

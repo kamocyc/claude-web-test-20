@@ -31,9 +31,9 @@ export function baseHeight(x: number, z: number, seed: number): number {
 
   // 尾根を盛る。z 方向の一箇所だけ鞍部があり、そこは遠回りすれば越えられる。
   const saddle = 1 - smoothstep(0, 6, Math.abs(z - SADDLE_Z));
-  const ridgeTop = RIDGE_Y - 5.0 * saddle;
+  const ridgeTop = RIDGE_Y - 3.5 * saddle;
   const rd = Math.abs(x - RIDGE_CENTER);
-  const ridgeMask = 1 - smoothstep(2, 11, rd);
+  const ridgeMask = 1 - smoothstep(1, 7, rd);
   h += Math.max(0, ridgeTop - PLATEAU_Y) * ridgeMask;
 
   // 全体に起伏
@@ -42,16 +42,30 @@ export function baseHeight(x: number, z: number, seed: number): number {
   return clamp(h, 2, WORLD.SY - 3);
 }
 
-/** その列の表層(土 or 軟弱)の厚さ。 */
+/**
+ * その列の表層(土 or 軟弱)の厚さ。
+ * 急斜面ほど薄い。おかげで尾根の肩は岩がむき出しになり、
+ * 「あの斜面は岩だから無支保で掘れそうだ」と地形を読む手掛かりになる。
+ */
 function soilThickness(x: number, z: number, seed: number): number {
-  return 2 + Math.round(fbm2(x * 0.17 + 40, z * 0.17, seed + 101) * 3);
+  const slope = Math.max(
+    Math.abs(baseHeight(x + 1, z, seed) - baseHeight(x - 1, z, seed)),
+    Math.abs(baseHeight(x, z + 1, seed) - baseHeight(x, z - 1, seed)),
+  ) / 2;
+  const base = 2 + fbm2(x * 0.17 + 40, z * 0.17, seed + 101) * 3;
+  return Math.max(0, Math.round(base * (1 - smoothstep(0.5, 2.2, slope))));
 }
 
-/** 尾根を斜めに横切る破砕帯。調査せずに掘ると当たる。 */
+/**
+ * 尾根を斜めに横切る破砕帯。調査せずに掘ると当たる。
+ * z 方向には限りがあるので、横にずらして掘れば避けられる。
+ * 「岩盤を狙って遠回りするか、軟弱層を突っ切って支保コストを払うか」がここで発生する。
+ */
 function inFaultZone(x: number, y: number, z: number, seed: number): boolean {
+  if (Math.abs(z - 16) >= 6 || x <= 27 || x >= 52) return false;
   const d = Math.abs((x - 37) * 0.78 + (z - 16) * 0.62);
   const wobble = (fbm2(y * 0.3, z * 0.2, seed + 77) - 0.5) * 3.0;
-  return d + wobble < 2.2 && x > 27 && x < 52;
+  return d + wobble < 2.2;
 }
 
 /** 散在する軟弱レンズ。 */
