@@ -63,6 +63,58 @@ describe('建てる前に分かる (支間)', () => {
     g.startPlan('truss', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
     expect(Object.values(g.plan!.foundations)).toContain('pile');
   });
+
+  it('基礎を落とすと耐力が足りなくなり、支間とは別の理由で拒否される', () => {
+    const g = gameWithMoney();
+    g.startPlan('truss', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+    const coord = g.plan!.pierCoords[0]!;
+    expect(g.planStatus()!.ok).toBe(true);
+
+    // 岩着杭(+3) → 直接基礎(+0)。軟弱層なので耐力は 0 になる。
+    while (g.plan!.foundations[coord] !== 'none') g.cyclePlanFoundation(coord);
+    const status = g.planStatus()!;
+    expect(status.span.ok).toBe(true); // 支間は満たしている
+    expect(status.ok).toBe(false);
+    expect(status.reason).toContain('荷重');
+    expect(status.reason).toContain('耐力');
+    const pier = status.loads.find((l) => !l.isAbutment)!;
+    expect(pier.bearing).toBe(0);
+    expect(pier.load).toBeGreaterThan(0);
+
+    // 確定は拒否され、支払いも起きない
+    const before = g.economy.budget;
+    expect(g.commitPlan().ok).toBe(false);
+    expect(g.economy.budget).toBe(before);
+    flushJobs(g);
+    expect(g.bridges.bridges).toHaveLength(0);
+
+    // 大型基礎(+1)でもまだ足りない
+    g.cyclePlanFoundation(coord);
+    expect(g.plan!.foundations[coord]).toBe('wide');
+    expect(g.planStatus()!.ok).toBe(false);
+
+    // 岩着杭に戻せば建てられる
+    g.cyclePlanFoundation(coord);
+    expect(g.plan!.foundations[coord]).toBe('pile');
+    expect(g.planStatus()!.ok).toBe(true);
+  });
+
+  it('橋脚を増やして荷重を分ければ、安い基礎でも成立する', () => {
+    const g = gameWithMoney();
+    g.startPlan('wood', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+    // 木橋は橋脚が多いので1本あたりの荷重が小さい
+    const loads = g.planStatus()!.loads.filter((l) => !l.isAbutment);
+    expect(loads.every((l) => l.load === 1)).toBe(true);
+    // それでも軟弱層(耐力0)の上では直接基礎は成り立たない
+    for (const c of g.plan!.pierCoords) {
+      while (g.plan!.foundations[c] !== 'none') g.cyclePlanFoundation(c);
+    }
+    const bad = g.planStatus()!;
+    expect(bad.ok).toBe(false);
+    expect(bad.loads.some((l) => !l.isAbutment && l.ground === Material.WEAK && !l.ok)).toBe(true);
+    // 岩の上の橋脚は直接基礎のままで足りている
+    expect(bad.loads.some((l) => !l.isAbutment && l.ground === Material.ROCK && l.ok)).toBe(true);
+  });
 });
 
 describe('崩壊は「後から地面が変わったとき」だけ', () => {

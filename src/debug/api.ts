@@ -32,7 +32,15 @@ export function installDebugApi(deps: DebugDeps): void {
       game.startPlan(type, { x: a[0], y: a[1], z: a[2] }, { x: b[0], y: b[1], z: b[2] }),
     planStatus: () => {
       const s = game.planStatus();
-      return s ? { ok: s.ok, reason: s.reason, cost: s.cost, spans: s.span.spans, piers: [...(game.plan?.pierCoords ?? [])], loads: s.loads } : null;
+      if (!s) return null;
+      return {
+        ok: s.ok,
+        reason: s.reason,
+        cost: s.cost,
+        spans: s.span.spans,
+        piers: [...(game.plan?.pierCoords ?? [])],
+        loads: s.loads.map((l) => ({ ...l, foundation: game.plan?.foundations[l.coord] ?? 'none' })),
+      };
     },
     togglePier: (coord: number) => game.togglePier(coord),
     cycleFoundation: (coord: number) => game.cyclePlanFoundation(coord),

@@ -35,8 +35,16 @@ interface Api {
   support(x: number, y: number, z: number, id: string): unknown;
   foundation(x: number, y: number, z: number, id: string): unknown;
   plan(type: string, a: [number, number, number], b: [number, number, number]): unknown;
-  planStatus(): { ok: boolean; reason: string; cost: number; spans: number[]; piers: number[] } | null;
+  planStatus(): {
+    ok: boolean;
+    reason: string;
+    cost: number;
+    spans: number[];
+    piers: number[];
+    loads: { coord: number; isAbutment: boolean; load: number; bearing: number; ok: boolean; foundation?: string }[];
+  } | null;
   togglePier(coord: number): unknown;
+  cycleFoundation(coord: number): unknown;
   commit(): void;
   cancel(): void;
   geology(on?: boolean): void;
@@ -162,8 +170,46 @@ async function main(): Promise<void> {
     [VALLEY_A, VALLEY_B, DECK_Y, Z],
   );
   check('トラス橋のプランは成立する', trussPlan?.ok === true, JSON.stringify(trussPlan));
+  check('谷底の橋脚には岩着杭が提案される', trussPlan?.loads.some((l) => !l.isAbutment && l.bearing === 3) === true);
   await page.waitForTimeout(500);
   await shot(page, 'truss-plan');
+
+  console.log('\n4b. 耐力不足 — 基礎を落とすと荷重が耐力を超え、やはり確定できない');
+  const weak = await page.evaluate(() => {
+    const g = globalThis.__game;
+    const pier = g.planStatus()!.piers[0]!;
+    const steps: { foundation: string; load: number; bearing: number; ok: boolean; reason: string }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const st = g.planStatus()!;
+      const l = st.loads.find((x) => !x.isAbutment)!;
+      steps.push({ foundation: String(l.foundation ?? ''), load: l.load, bearing: l.bearing, ok: st.ok, reason: st.reason });
+      if (st.ok) g.cycleFoundation(pier); // 岩着杭 → 直接基礎
+    }
+    return { steps, commit: g.planStatus()!.ok };
+  });
+  await page.waitForTimeout(600);
+  const bad = weak.steps.find((x) => !x.ok);
+  check('直接基礎に落とすと耐力が足りなくなる', bad !== undefined, JSON.stringify(weak.steps));
+  check('理由が「荷重 > 耐力」だと分かる', (bad?.reason ?? '').includes('荷重') && (bad?.reason ?? '').includes('耐力'));
+  check('軟弱層の耐力は0', bad?.bearing === 0, JSON.stringify(bad));
+  await shot(page, 'bearing-rejected');
+
+  const refused = await page.evaluate(() => {
+    const g = globalThis.__game;
+    const before = (g.state() as { budget: number }).budget;
+    g.commit();
+    const after = g.state() as { budget: number; bridges: unknown[] };
+    return { before, after: after.budget, bridges: after.bridges.length };
+  });
+  check('耐力不足のまま確定しようとしても建たない', refused.bridges === 0);
+  check('支払いも発生しない', refused.before === refused.after);
+
+  // 岩着杭に戻してから架ける
+  await page.evaluate(() => {
+    const g = globalThis.__game;
+    const pier = g.planStatus()!.piers[0]!;
+    while (!g.planStatus()!.ok) g.cycleFoundation(pier);
+  });
 
   await page.evaluate(() => {
     globalThis.__game.commit();
