@@ -10,6 +10,17 @@ export function cellToWorld(x: number, y: number, z: number, target = new THREE.
   return target.set(OX + x + 0.5, y + 0.5, OZ + z + 0.5);
 }
 
+/** 平行移動の基準速度 (単位/秒)。 */
+const PAN_SPEED = 26;
+const UP = new THREE.Vector3(0, 1, 0);
+const FORWARD = new THREE.Vector3();
+const RIGHT = new THREE.Vector3();
+const DELTA = new THREE.Vector3();
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
 export function worldToCell(p: THREE.Vector3): { x: number; y: number; z: number } {
   return { x: Math.floor(p.x - OX), y: Math.floor(p.y), z: Math.floor(p.z - OZ) };
 }
@@ -75,6 +86,36 @@ export class Scene {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * 視点を水平に平行移動する。カメラの向きを基準にするので、
+   * 回してから動かしても「見えている向き」で動く。
+   * 引きの絵ほど速く動かないと遠く感じるので、距離に比例させている。
+   */
+  pan(right: number, forward: number, dt: number): void {
+    if (right === 0 && forward === 0) return;
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const speed = PAN_SPEED * Math.max(0.35, distance / 60) * dt;
+
+    this.camera.getWorldDirection(FORWARD);
+    FORWARD.y = 0;
+    if (FORWARD.lengthSq() < 1e-6) FORWARD.set(0, 0, -1);
+    FORWARD.normalize();
+    RIGHT.crossVectors(FORWARD, UP).normalize();
+
+    DELTA.set(0, 0, 0).addScaledVector(RIGHT, right * speed).addScaledVector(FORWARD, forward * speed);
+
+    // 世界の外まで飛んでいかないように注視点を閉じ込める。
+    const margin = 12;
+    const tx = clamp(this.controls.target.x + DELTA.x, -WORLD.SX / 2 - margin, WORLD.SX / 2 + margin);
+    const tz = clamp(this.controls.target.z + DELTA.z, -WORLD.SZ / 2 - margin, WORLD.SZ / 2 + margin);
+    DELTA.x = tx - this.controls.target.x;
+    DELTA.z = tz - this.controls.target.z;
+
+    this.controls.target.add(DELTA);
+    this.camera.position.add(DELTA);
+    this.controls.update();
   }
 
   /** 指定セルにカメラの注視点を寄せる (警告からのジャンプ用)。 */

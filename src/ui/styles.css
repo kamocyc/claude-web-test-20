@@ -154,6 +154,11 @@ button.tool.active {
   border-color: var(--accent);
 }
 
+button.tool kbd.none {
+  border-color: transparent;
+  background: none;
+}
+
 button.tool kbd {
   font-size: 10px;
   color: var(--dim);

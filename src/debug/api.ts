@@ -100,6 +100,11 @@ export function installDebugApi(deps: DebugDeps): void {
       bores: game.survey.boreCount,
       jobs: game.jobs.length,
       geology: terrain.geologyView,
+      cameraTarget: [
+        Math.round(view.controls.target.x * 100) / 100,
+        Math.round(view.controls.target.y * 100) / 100,
+        Math.round(view.controls.target.z * 100) / 100,
+      ],
       helpOpen: hud.helpOpen,
     }),
     scene: view.scene,

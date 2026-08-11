@@ -18,7 +18,7 @@ import { bridgeCell } from '../sim/bridge.ts';
 import { hazardProgress } from '../sim/hazard.ts';
 import { cellToWorld } from '../render/Scene.ts';
 import { TOOL_DEFS, sameTool } from './tools.ts';
-import type { Tool } from './tools.ts';
+import type { Tool, ToolDef } from './tools.ts';
 
 export interface HudCallbacks {
   onSelect: (tool: Tool) => void;
@@ -35,7 +35,7 @@ const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
 export class Hud {
   private root: HTMLElement;
   private el: Record<string, HTMLElement> = {};
-  private toolButtons = new Map<string, HTMLButtonElement>();
+  private toolButtons: { def: ToolDef; btn: HTMLButtonElement }[] = [];
   private labels: HTMLElement[] = [];
   private toasts: { el: HTMLElement; life: number }[] = [];
   /** 開通バナーは数秒で引っ込める(景色を隠し続けない) */
@@ -89,10 +89,11 @@ export class Hud {
       }
       const btn = document.createElement('button');
       btn.className = 'tool';
-      btn.innerHTML = `<kbd>${def.key}</kbd><span>${def.label}</span><span class="cost">${def.hint}</span>`;
+      const kbd = def.key ? `<kbd>${def.key}</kbd>` : '<kbd class="none"></kbd>';
+      btn.innerHTML = `${kbd}<span>${def.label}</span><span class="cost">${def.hint}</span>`;
       btn.addEventListener('click', () => this.select(def.tool));
       tools.appendChild(btn);
-      this.toolButtons.set(def.key, btn);
+      this.toolButtons.push({ def, btn });
     }
 
     // ---- 右
@@ -134,7 +135,7 @@ export class Hud {
       .map(([t, c]) => `<div><i style="background:${hex(c as number)}"></i>${t}</div>`)
       .join('');
     const note = this.div(right, 'legend');
-    note.innerHTML = `<div>地下水位 y=${WORLD.WATER_TABLE_Y} より下は支保レベル +1</div><div>道路として認める経路長は ${MAX_ROUTE_LENGTH} マスまで</div><div>左ドラッグ: 回転 / 右ドラッグ: 平行移動 / Space: 一時停止</div>`;
+    note.innerHTML = `<div>地下水位 y=${WORLD.WATER_TABLE_Y} より下は支保レベル +1</div><div>道路として認める経路長は ${MAX_ROUTE_LENGTH} マスまで</div><div>WASD / 矢印: 視点移動 · 左ドラッグ: 回転 · ホイール: ズーム</div>`;
 
     // ---- 警告
     const warn = this.div(this.root, 'panel', 'warnings');
@@ -200,7 +201,7 @@ export class Hud {
           <ol>
             <li>まず地形を見る<small>崖や谷壁は露頭なので、そこだけは掘らなくても地質の色が見える。黄色は軟弱層。</small></li>
             <li>気になる場所にボーリングを打つ (<kbd>1</kbd>)<small>1本 ¥${SURVEY_COST}。その位置の地層が縦一列だけ見えるようになる。<kbd>G</kbd> の地質ビューで確認する。</small></li>
-            <li>谷に橋を架ける<small><kbd>Q</kbd>〜<kbd>T</kbd> で橋種を選び、起点 → 終点の順にクリック。支間と荷重を満たす橋脚・基礎が自動で提案される。</small></li>
+            <li>谷に橋を架ける<small>左のパレットで橋種を選び、起点 → 終点の順にクリック。支間と荷重を満たす橋脚・基礎が自動で提案される。</small></li>
             <li>尾根を抜ける<small>掘削 (<kbd>2</kbd>) で坑道を掘る。土被りがあるセルは支保 (<kbd>4</kbd>〜<kbd>6</kbd>) が要る。切土なら要らない。</small></li>
             <li>足りない段差は盛土 (<kbd>3</kbd>) と掘削で均す<small>段差2以上は歩けない。</small></li>
           </ol>
@@ -216,13 +217,13 @@ export class Hud {
           <h3>操作</h3>
           <table>
             <tr><td>左クリック</td><td>選択中の道具を使う</td></tr>
+            <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / 矢印</td><td>視点を上下左右に動かす (Shift で速く)</td></tr>
             <tr><td>左ドラッグ</td><td>視点を回す</td></tr>
             <tr><td>右ドラッグ</td><td>視点を平行移動</td></tr>
             <tr><td>ホイール</td><td>ズーム</td></tr>
             <tr><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></td><td>調査 / 掘削 / 盛土</td></tr>
             <tr><td><kbd>4</kbd><kbd>5</kbd><kbd>6</kbd></td><td>木枠 / コンクリート覆工 / 鋼製支保+排水</td></tr>
-            <tr><td><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><kbd>T</kbd></td><td>木橋 / コンクリート橋 / 鋼橋 / トラス橋 / 吊橋</td></tr>
-            <tr><td><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>大型基礎 / 岩着杭 / 撤去</td></tr>
+            <tr><td>左のパレット</td><td>橋 (5種) / 基礎補強 / 撤去 はボタンから選ぶ</td></tr>
             <tr><td><kbd>G</kbd></td><td>地質ビュー (右のスライダーで断面の位置)</td></tr>
             <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>建設プランの確定 / 取消</td></tr>
             <tr><td><kbd>Space</kbd></td><td>一時停止 (猶予をゆっくり見る)</td></tr>
@@ -230,7 +231,7 @@ export class Hud {
           </table>
           <h3>橋を架ける手順</h3>
           <ol>
-            <li>橋種を選び、起点の地面をクリック</li>
+            <li>左のパレットで橋種を選び、起点の地面をクリック</li>
             <li>対岸の地面をクリック → プランになる</li>
             <li>桁マスをクリックで橋脚を足し引き / Shift+クリックで基礎を切替</li>
             <li>右下の表で <b>荷重 ≤ 耐力</b> を確認して <kbd>Enter</kbd></li>
@@ -303,15 +304,12 @@ export class Hud {
 
   select(tool: Tool): void {
     this.selected = tool;
-    for (const [key, btn] of this.toolButtons) {
-      const def = TOOL_DEFS.find((d) => d.key === key);
-      btn.classList.toggle('active', !!def && sameTool(def.tool, tool));
-    }
+    for (const { def, btn } of this.toolButtons) btn.classList.toggle('active', sameTool(def.tool, tool));
     this.cb.onSelect(tool);
   }
 
   selectByKey(key: string): boolean {
-    const def = TOOL_DEFS.find((d) => d.key === key.toUpperCase());
+    const def = TOOL_DEFS.find((d) => d.key !== '' && d.key === key.toUpperCase());
     if (!def) return false;
     this.select(def.tool);
     return true;

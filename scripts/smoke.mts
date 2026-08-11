@@ -121,6 +121,28 @@ async function main(): Promise<void> {
   console.log('\n1. 初期状態 — 地質は不明、谷と尾根に阻まれて未通');
   await page.evaluate(() => globalThis.__game.help(false));
   await page.waitForTimeout(400);
+
+  // WASD で視点が動く (道具のショートカットと取り合いにならない)
+  const before = (await page.evaluate(() => globalThis.__game.state())) as { cameraTarget: number[] };
+  await page.keyboard.down('d');
+  await page.waitForTimeout(450);
+  await page.keyboard.up('d');
+  await page.waitForTimeout(150);
+  const afterD = (await page.evaluate(() => globalThis.__game.state())) as { cameraTarget: number[] };
+  await page.keyboard.down('w');
+  await page.waitForTimeout(450);
+  await page.keyboard.up('w');
+  await page.waitForTimeout(150);
+  const afterW = (await page.evaluate(() => globalThis.__game.state())) as {
+    cameraTarget: number[];
+    jobs: number;
+    bores: number;
+  };
+  check('D で視点が横に動く', Math.abs(afterD.cameraTarget[0]! - before.cameraTarget[0]!) > 1, JSON.stringify([before.cameraTarget, afterD.cameraTarget]));
+  check('W で視点が奥に動く', Math.abs(afterW.cameraTarget[2]! - afterD.cameraTarget[2]!) > 1, JSON.stringify([afterD.cameraTarget, afterW.cameraTarget]));
+  check('視点移動で道具は動かない (WASD が道具に取られていない)', afterW.jobs === 0 && afterW.bores === 0);
+  await page.evaluate(() => globalThis.__game.camera(-26, 60, 58, 0, 11, 0));
+  await page.waitForTimeout(200);
   const start = (await page.evaluate(() => globalThis.__game.state())) as { connected: boolean; budget: number };
   check('初期状態では未通', start.connected === false);
   await shot(page, 'start');

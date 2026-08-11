@@ -81,7 +81,43 @@ canvas.addEventListener('pointerup', (e) => {
   act(e.clientX, e.clientY, e.shiftKey);
 });
 
+/** 押しっぱなしで動かしたいので、キーの状態を持っておく。 */
+const held = new Set<string>();
+const PAN_KEYS: Record<string, [number, number]> = {
+  w: [0, 1],
+  s: [0, -1],
+  a: [-1, 0],
+  d: [1, 0],
+  arrowup: [0, 1],
+  arrowdown: [0, -1],
+  arrowleft: [-1, 0],
+  arrowright: [1, 0],
+};
+
+addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()));
+addEventListener('blur', () => held.clear());
+
+function panCamera(dt: number): void {
+  let right = 0;
+  let forward = 0;
+  for (const key of held) {
+    const dir = PAN_KEYS[key];
+    if (!dir) continue;
+    right += dir[0];
+    forward += dir[1];
+  }
+  if (right === 0 && forward === 0) return;
+  const boost = held.has('shift') ? 2.4 : 1;
+  view.pan(right * boost, forward * boost, dt);
+}
+
 addEventListener('keydown', (e) => {
+  const lower = e.key.toLowerCase();
+  if (lower in PAN_KEYS || lower === 'shift') {
+    held.add(lower);
+    if (lower.startsWith('arrow')) e.preventDefault();
+    return;
+  }
   if (e.key === 'g' || e.key === 'G') {
     terrain.toggleGeology();
     hud.setGeologyActive(terrain.geologyView);
@@ -198,6 +234,7 @@ function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
 
+  panCamera(dt);
   game.tick(dt);
   drainEvents();
 
