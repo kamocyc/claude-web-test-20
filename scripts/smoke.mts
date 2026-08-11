@@ -45,6 +45,7 @@ interface Api {
   } | null;
   togglePier(coord: number): unknown;
   cycleFoundation(coord: number): unknown;
+  autoFoundations(): unknown;
   commit(): void;
   cancel(): void;
   geology(on?: boolean): void;
@@ -177,12 +178,12 @@ async function main(): Promise<void> {
     [VALLEY_A, VALLEY_B, DECK_Y, Z],
   );
   await page.waitForTimeout(600);
-  check('橋脚ありなら木橋でも成立する', rejected.before?.ok === true);
+  check('橋脚ありなら支間は満たせる', rejected.before?.spans.every((n) => n <= 3) === true, JSON.stringify(rejected.before?.spans));
   check('橋脚を外すと支間超過で拒否される', rejected.after?.ok === false, JSON.stringify(rejected.after));
   check('理由が支間超過だと分かる', (rejected.after?.reason ?? '').includes('支間超過'));
   await shot(page, 'span-rejected');
 
-  console.log('\n4. トラス橋 — 谷底が軟弱なので橋脚には岩着杭が要る');
+  console.log('\n4. トラス橋 — 谷底は耐力0なので、まず赤くなって拒否される');
   const trussPlan = await page.evaluate(
     ([a, b, y, z]) => {
       globalThis.__game.cancel();
@@ -191,29 +192,12 @@ async function main(): Promise<void> {
     },
     [VALLEY_A, VALLEY_B, DECK_Y, Z],
   );
-  check('トラス橋のプランは成立する', trussPlan?.ok === true, JSON.stringify(trussPlan));
-  check('谷底の橋脚には岩着杭が提案される', trussPlan?.loads.some((l) => !l.isAbutment && l.bearing === 3) === true);
-  await page.waitForTimeout(500);
-  await shot(page, 'truss-plan');
-
-  console.log('\n4b. 耐力不足 — 基礎を落とすと荷重が耐力を超え、やはり確定できない');
-  const weak = await page.evaluate(() => {
-    const g = globalThis.__game;
-    const pier = g.planStatus()!.piers[0]!;
-    const steps: { foundation: string; load: number; bearing: number; ok: boolean; reason: string }[] = [];
-    for (let i = 0; i < 3; i++) {
-      const st = g.planStatus()!;
-      const l = st.loads.find((x) => !x.isAbutment)!;
-      steps.push({ foundation: String(l.foundation ?? ''), load: l.load, bearing: l.bearing, ok: st.ok, reason: st.reason });
-      if (st.ok) g.cycleFoundation(pier); // 岩着杭 → 直接基礎
-    }
-    return { steps, commit: g.planStatus()!.ok };
-  });
   await page.waitForTimeout(600);
-  const bad = weak.steps.find((x) => !x.ok);
-  check('直接基礎に落とすと耐力が足りなくなる', bad !== undefined, JSON.stringify(weak.steps));
-  check('理由が「荷重 > 耐力」だと分かる', (bad?.reason ?? '').includes('荷重') && (bad?.reason ?? '').includes('耐力'));
-  check('軟弱層の耐力は0', bad?.bearing === 0, JSON.stringify(bad));
+  const pier0 = trussPlan?.loads.find((l) => !l.isAbutment);
+  check('基礎は勝手に決まらない (直接基礎で始まる)', pier0?.foundation === 'none', JSON.stringify(pier0));
+  check('支間は満たしている', trussPlan?.spans.every((n) => n <= 10) === true);
+  check('それでも軟弱層の耐力0で拒否される', trussPlan?.ok === false, JSON.stringify(trussPlan?.reason));
+  check('理由が「荷重 > 耐力」だと分かる', (trussPlan?.reason ?? '').includes('荷重') && (trussPlan?.reason ?? '').includes('耐力'));
   await shot(page, 'bearing-rejected');
 
   const refused = await page.evaluate(() => {
@@ -223,15 +207,24 @@ async function main(): Promise<void> {
     const after = g.state() as { budget: number; bridges: unknown[] };
     return { before, after: after.budget, bridges: after.bridges.length };
   });
-  check('耐力不足のまま確定しようとしても建たない', refused.bridges === 0);
+  check('そのまま確定しようとしても建たない', refused.bridges === 0);
   check('支払いも発生しない', refused.before === refused.after);
 
-  // 岩着杭に戻してから架ける
-  await page.evaluate(() => {
+  console.log('\n4b. 基礎を補う — 値段が上がることを見たうえで自分で選ぶ');
+  const fixed = await page.evaluate(() => {
     const g = globalThis.__game;
-    const pier = g.planStatus()!.piers[0]!;
-    while (!g.planStatus()!.ok) g.cycleFoundation(pier);
+    const before = g.planStatus()!;
+    g.autoFoundations();
+    const after = g.planStatus()!;
+    return { beforeCost: before.cost, after };
   });
+  await page.waitForTimeout(600);
+  const fixedPier = fixed.after.loads.find((l) => !l.isAbutment);
+  check('補うと岩着杭まで上がる', fixedPier?.foundation === 'pile', JSON.stringify(fixedPier));
+  check('耐力が荷重に届く', (fixedPier?.bearing ?? 0) >= (fixedPier?.load ?? 99));
+  check('そのぶん値段が上がる', fixed.after.cost > fixed.beforeCost, `${fixed.beforeCost} → ${fixed.after.cost}`);
+  check('ここでようやく確定できる', fixed.after.ok === true);
+  await shot(page, 'truss-plan');
 
   await page.evaluate(() => {
     globalThis.__game.commit();

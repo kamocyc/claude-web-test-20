@@ -44,6 +44,7 @@ export function installDebugApi(deps: DebugDeps): void {
     },
     togglePier: (coord: number) => game.togglePier(coord),
     cycleFoundation: (coord: number) => game.cyclePlanFoundation(coord),
+    autoFoundations: () => game.autoFillFoundations(),
     commit: () => deps.commitPlan(),
     cancel: () => game.cancelPlan(),
     setTool: (tool: Tool) => deps.setTool(tool),

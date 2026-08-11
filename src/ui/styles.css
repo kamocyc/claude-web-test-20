@@ -370,6 +370,15 @@ button.wide.on {
   gap: 6px;
 }
 
+#plan .fix {
+  display: none;
+  background: rgba(255, 200, 87, 0.16);
+  border-color: rgba(255, 200, 87, 0.5);
+  color: var(--warn);
+  font-size: 12px;
+  padding: 6px;
+}
+
 #plan .hint {
   font-size: 10px;
   color: var(--dim);

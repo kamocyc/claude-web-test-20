@@ -254,10 +254,9 @@ export class Game {
     const b = Math.max(av, bv);
     if (b - a < 1) return fail('長さが足りない');
     const y = Math.max(from.y, to.y);
-    const pierCoords = autoPierCoords(type, a, b);
-    const draft: BridgePlan = { type, axis, y, a, b, cross, pierCoords, foundations: {} };
-    draft.foundations = this.bridges.autoFoundations(draft);
-    this.plan = draft;
+    // 基礎は勝手に決めない。谷底が軟弱なら、まず赤くなって「ここは耐力0だ」と伝える。
+    // 何を足すか (基礎を上げる / 橋脚を増やす / 橋脚を立てない橋にする) はプレイヤーが選ぶ。
+    this.plan = { type, axis, y, a, b, cross, pierCoords: autoPierCoords(type, a, b), foundations: {} };
     return OK;
   }
 
@@ -276,9 +275,31 @@ export class Game {
       delete plan.foundations[coord];
     } else {
       plan.pierCoords.push(coord);
-      plan.foundations = this.bridges.autoFoundations(plan);
     }
     return OK;
+  }
+
+  /**
+   * 足りない基礎をまとめて最も安い組み合わせに引き上げる。
+   * 一度「耐力が足りない」と赤で見せたうえで、値段つきで提示する近道。
+   */
+  autoFillFoundations(): ActionResult {
+    const plan = this.plan;
+    if (!plan) return fail('プランがない');
+    if (plan.pierCoords.length === 0) return fail('橋脚がない');
+    const before = this.bridges.planCost(plan);
+    plan.foundations = this.bridges.autoFoundations(plan);
+    const after = this.bridges.planCost(plan);
+    return { ok: true, reason: `基礎を補強した (+¥${(after - before).toLocaleString()})` };
+  }
+
+  /** 基礎を補ったときに増える金額。ボタンに出す。 */
+  foundationFixCost(): number | null {
+    const plan = this.plan;
+    if (!plan || plan.pierCoords.length === 0) return null;
+    const trial: BridgePlan = { ...plan, foundations: this.bridges.autoFoundations(plan) };
+    const delta = this.bridges.planCost(trial) - this.bridges.planCost(plan);
+    return delta > 0 ? delta : null;
   }
 
   /** プラン上の橋脚の基礎を切り替える。耐力に足す整数を選ぶだけ。 */

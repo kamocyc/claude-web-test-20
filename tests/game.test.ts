@@ -18,6 +18,7 @@ function gameWithMoney(): Game {
 
 function buildTruss(g: Game): void {
   g.startPlan('truss', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+  g.autoFillFoundations();
   expect(g.planStatus()?.ok).toBe(true);
   expect(g.commitPlan().ok).toBe(true);
   flushJobs(g);
@@ -29,7 +30,7 @@ describe('建てる前に分かる (支間)', () => {
     const g = gameWithMoney();
     g.startPlan('wood', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
     expect(g.plan!.pierCoords.length).toBeGreaterThan(0);
-    expect(g.planStatus()?.ok).toBe(true);
+    expect(g.planStatus()?.span.ok).toBe(true);
   });
 
   it('橋脚を全部外すと支間超過になり、確定が拒否される', () => {
@@ -50,6 +51,7 @@ describe('建てる前に分かる (支間)', () => {
   it('吊橋なら同じ谷を橋脚なしで渡せる (ただし高い)', () => {
     const g = gameWithMoney();
     g.startPlan('truss', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+    g.autoFillFoundations();
     const trussCost = g.planStatus()!.cost;
     g.startPlan('suspension', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
     const status = g.planStatus()!;
@@ -58,16 +60,45 @@ describe('建てる前に分かる (支間)', () => {
     expect(status.cost).toBeGreaterThan(trussCost);
   });
 
-  it('谷底は軟弱なので、橋脚には基礎補強が自動で提案される', () => {
+  it('基礎は勝手に決まらない。谷底の橋脚はまず直接基礎で、耐力不足として赤くなる', () => {
     const g = gameWithMoney();
     g.startPlan('truss', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
-    expect(Object.values(g.plan!.foundations)).toContain('pile');
+    const coord = g.plan!.pierCoords[0]!;
+    expect(g.plan!.foundations[coord] ?? 'none').toBe('none');
+
+    const status = g.planStatus()!;
+    expect(status.span.ok).toBe(true);
+    expect(status.ok).toBe(false);
+    expect(status.reason).toContain('耐力 0');
+  });
+
+  it('基礎を補うのは明示的な操作で、値段がはっきり増える', () => {
+    const g = gameWithMoney();
+    g.startPlan('truss', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+    const coord = g.plan!.pierCoords[0]!;
+    const before = g.planStatus()!.cost;
+    const delta = g.foundationFixCost();
+    expect(delta).toBeGreaterThan(0);
+
+    expect(g.autoFillFoundations().ok).toBe(true);
+    expect(g.plan!.foundations[coord]).toBe('pile'); // 軟弱層なので杭まで上げる必要がある
+    expect(g.planStatus()!.ok).toBe(true);
+    expect(g.planStatus()!.cost).toBe(before + delta!);
+    expect(g.foundationFixCost()).toBeNull(); // もう補うところがない
+  });
+
+  it('橋脚を立てない吊橋なら、軟弱な谷底に一切触らずに済む', () => {
+    const g = gameWithMoney();
+    g.startPlan('suspension', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+    expect(g.plan!.pierCoords).toHaveLength(0);
+    expect(g.planStatus()!.ok).toBe(true); // 基礎を触らなくても成立する
   });
 
   it('基礎を落とすと耐力が足りなくなり、支間とは別の理由で拒否される', () => {
     const g = gameWithMoney();
     g.startPlan('truss', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
     const coord = g.plan!.pierCoords[0]!;
+    g.autoFillFoundations();
     expect(g.planStatus()!.ok).toBe(true);
 
     // 岩着杭(+3) → 直接基礎(+0)。軟弱層なので耐力は 0 になる。
@@ -102,6 +133,7 @@ describe('建てる前に分かる (支間)', () => {
   it('橋脚を増やして荷重を分ければ、安い基礎でも成立する', () => {
     const g = gameWithMoney();
     g.startPlan('wood', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+    g.autoFillFoundations();
     // 木橋は橋脚が多いので1本あたりの荷重が小さい
     const loads = g.planStatus()!.loads.filter((l) => !l.isAbutment);
     expect(loads.every((l) => l.load === 1)).toBe(true);
@@ -186,6 +218,7 @@ describe('崩壊は「後から地面が変わったとき」だけ', () => {
   it('荷重が小さい橋なら、覆工しておけばトンネルを下に通しても持つ', () => {
     const g = gameWithMoney();
     g.startPlan('wood', { x: VALLEY_A, y: DECK_Y, z: Z }, { x: VALLEY_B, y: DECK_Y, z: Z });
+    g.autoFillFoundations();
     g.commitPlan();
     flushJobs(g);
     const bridge = g.bridges.bridges[0]!;

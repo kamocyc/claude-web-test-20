@@ -46,6 +46,10 @@ const hud = new Hud(uiRoot, {
   },
   onSlice: (z) => terrain.setSlice(z),
   onCommit: () => commitPlan(),
+  onAutoFoundation: () => {
+    const res = game.autoFillFoundations();
+    hud.toast(res.reason, res.ok ? 'good' : 'bad');
+  },
   onCancel: () => {
     game.cancelPlan();
     anchor = null;

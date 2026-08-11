@@ -26,6 +26,7 @@ export interface HudCallbacks {
   onToggleGeology: () => void;
   onSlice: (z: number) => void;
   onCommit: () => void;
+  onAutoFoundation: () => void;
   onCancel: () => void;
   onFocus: (cell: Cell) => void;
 }
@@ -149,10 +150,12 @@ export class Hud {
     const plan = this.div(this.root, 'panel', 'plan');
     this.el.plan = plan;
     plan.innerHTML =
-      '<h4></h4><div class="verdict"></div><table><thead><tr><th>支持点</th><th>受持</th><th>荷重</th><th>耐力</th><th>基礎</th></tr></thead><tbody></tbody></table><div class="hint">桁マスをクリック: 橋脚の増減 / Shift+クリック: 基礎の切替</div><div class="row"></div>';
+      '<h4></h4><div class="verdict"></div><table><thead><tr><th>支持点</th><th>受持</th><th>荷重</th><th>耐力</th><th>基礎</th></tr></thead><tbody></tbody></table><button class="wide fix"></button><div class="hint">桁マスをクリック: 橋脚の増減 / Shift+クリック: 基礎の切替</div><div class="row"></div>';
     this.el.planTitle = plan.querySelector('h4') as HTMLElement;
     this.el.planVerdict = plan.querySelector('.verdict') as HTMLElement;
     this.el.planBody = plan.querySelector('tbody') as HTMLElement;
+    this.el.planFix = plan.querySelector('.fix') as HTMLElement;
+    this.el.planFix.addEventListener('click', () => this.cb.onAutoFoundation());
     const row = plan.querySelector('.row') as HTMLElement;
     const commit = document.createElement('button');
     commit.className = 'wide';
@@ -201,7 +204,7 @@ export class Hud {
           <ol>
             <li>まず地形を見る<small>崖や谷壁は露頭なので、そこだけは掘らなくても地質の色が見える。黄色は軟弱層。</small></li>
             <li>気になる場所にボーリングを打つ (<kbd>1</kbd>)<small>1本 ¥${SURVEY_COST}。その位置の地層が縦一列だけ見えるようになる。<kbd>G</kbd> の地質ビューで確認する。</small></li>
-            <li>谷に橋を架ける<small>左のパレットで橋種を選び、起点 → 終点の順にクリック。支間と荷重を満たす橋脚・基礎が自動で提案される。</small></li>
+            <li>谷に橋を架ける<small>左のパレットで橋種を選び、起点 → 終点の順にクリック。支間を満たす橋脚は自動で入るが、<b>基礎は入らない</b>。谷底は耐力0なので赤くなる。</small></li>
             <li>尾根を抜ける<small>掘削 (<kbd>2</kbd>) で坑道を掘る。土被りがあるセルは支保 (<kbd>4</kbd>〜<kbd>6</kbd>) が要る。切土なら要らない。</small></li>
             <li>足りない段差は盛土 (<kbd>3</kbd>) と掘削で均す<small>段差2以上は歩けない。</small></li>
           </ol>
@@ -232,8 +235,8 @@ export class Hud {
           <h3>橋を架ける手順</h3>
           <ol>
             <li>左のパレットで橋種を選び、起点の地面をクリック</li>
-            <li>対岸の地面をクリック → プランになる</li>
-            <li>桁マスをクリックで橋脚を足し引き / Shift+クリックで基礎を切替</li>
+            <li>対岸の地面をクリック → プランになる。支間を満たす橋脚は自動で入る</li>
+            <li>耐力が足りなければ赤くなる。<b>基礎は自動では入らない</b>ので自分で決める<small>Shift+クリックで基礎を上げる / 「基礎を補う」ボタンでまとめて上げる / 桁マスをクリックで橋脚を増やす / 橋脚の要らない吊橋にする</small></li>
             <li>右下の表で <b>荷重 ≤ 耐力</b> を確認して <kbd>Enter</kbd></li>
           </ol>
           <h3>覚える数字は3つだけ</h3>
@@ -284,7 +287,10 @@ export class Hud {
       const st = game.planStatus();
       return st?.ok
         ? { text: `Enter で確定 (¥${st.cost.toLocaleString()})。桁マスをクリックすれば橋脚を足し引きできる`, tone: 'done' }
-        : { text: `${st?.reason ?? ''} — 桁マスをクリックで橋脚を足す / Shift+クリックで基礎を上げる`, tone: 'urgent' };
+        : {
+            text: `${st?.reason ?? ''} — 基礎を上げる (Shift+クリック / 右下のボタン) か、橋脚を増やすか、橋脚の要らない橋にする`,
+            tone: 'urgent',
+          };
     }
     if (game.jobs.length > 0) return { text: `施工中: ${game.currentJob?.label ?? ''}`, tone: '' };
     if (game.survey.boreCount === 0 && game.bridges.bridges.length === 0) {
@@ -439,6 +445,12 @@ export class Hud {
         .join('');
       (this.el.commit as HTMLButtonElement).disabled = !status.ok;
       (this.el.commit as HTMLButtonElement).style.opacity = status.ok ? '1' : '0.45';
+
+      // 耐力が足りないときだけ、値段つきの近道を出す。
+      const fixCost = game.foundationFixCost();
+      const showFix = !status.ok && status.span.ok && fixCost !== null;
+      this.el.planFix!.style.display = showFix ? 'block' : 'none';
+      if (showFix) this.el.planFix!.textContent = `基礎を補う (+¥${fixCost.toLocaleString()})`;
     }
 
     // ビネット
