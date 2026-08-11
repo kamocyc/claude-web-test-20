@@ -1,11 +1,15 @@
 import * as THREE from 'three';
 import type { Cell, PierLoad, SpanCheck } from '../core/types.ts';
 import type { BridgePlan } from '../sim/bridge.ts';
+import type { GradePlanResult } from '../sim/Game.ts';
 import { bridgeCell } from '../sim/bridge.ts';
 import { cellToWorld } from './Scene.ts';
 
 const OK_COLOR = 0x8fe3b0;
 const NG_COLOR = 0xff5a5a;
+/** 切土 = 削る。盛土 = 埋める。 */
+const CUT_COLOR = 0xe08a4a;
+const FILL_COLOR = 0x5aa8e0;
 
 /**
  * 建設プレビュー。「建ててから落ちるのではなく、建てる前に分かる」ための表示。
@@ -15,7 +19,9 @@ export class Ghost {
   readonly group = new THREE.Group();
   private cursor: THREE.Mesh;
   private planGroup = new THREE.Group();
+  private gradeGroup = new THREE.Group();
   private signature = '';
+  private gradeSignature = '';
 
   constructor() {
     this.cursor = new THREE.Mesh(
@@ -24,7 +30,7 @@ export class Ghost {
     );
     this.cursor.renderOrder = 8;
     this.cursor.visible = false;
-    this.group.add(this.cursor, this.planGroup);
+    this.group.add(this.cursor, this.planGroup, this.gradeGroup);
   }
 
   setCursor(cell: Cell | null, ok = true): void {
@@ -32,6 +38,33 @@ export class Ghost {
     if (!cell) return;
     cellToWorld(cell.x, cell.y, cell.z, this.cursor.position);
     (this.cursor.material as THREE.MeshBasicMaterial).color.setHex(ok ? 0xffffff : NG_COLOR);
+  }
+
+  /**
+   * 道路敷設のプレビュー。削るところと埋めるところを色で分ける。
+   * 「建てる前に分かる」を土工にも通すための表示。
+   */
+  setGrade(plan: GradePlanResult | null): void {
+    const sig = plan
+      ? plan.ok
+        ? `g${plan.length}:${plan.cut}:${plan.fill}:${plan.columns[0]?.x},${plan.columns[0]?.z}:${plan.columns.at(-1)?.x},${plan.columns.at(-1)?.z}`
+        : `x${plan.reason}`
+      : '';
+    if (sig === this.gradeSignature) return;
+    this.gradeSignature = sig;
+
+    for (const c of [...this.gradeGroup.children]) {
+      this.gradeGroup.remove(c);
+      (c as THREE.Mesh).geometry.dispose();
+    }
+    if (!plan || !plan.ok) return;
+
+    for (const col of plan.columns) {
+      for (const y of col.dig) this.gradeGroup.add(gradeBox(col.x, y, col.z, CUT_COLOR, 0.34));
+      for (const y of col.fill) this.gradeGroup.add(gradeBox(col.x, y, col.z, FILL_COLOR, 0.34));
+      // 出来上がる路面
+      this.gradeGroup.add(gradeBox(col.x, col.target, col.z, OK_COLOR, 0.5, 0.14));
+    }
   }
 
   /** 起点だけ決まっている状態の表示。 */
@@ -105,4 +138,13 @@ export class Ghost {
       this.planGroup.add(post);
     }
   }
+}
+
+function gradeBox(x: number, y: number, z: number, color: number, opacity: number, height = 0.9): THREE.Mesh {
+  const m = new THREE.Mesh(
+    new THREE.BoxGeometry(0.9, height, 0.9),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }),
+  );
+  cellToWorld(x, y, z, m.position);
+  return m;
 }

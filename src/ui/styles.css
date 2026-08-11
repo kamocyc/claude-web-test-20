@@ -631,3 +631,32 @@ button.wide.on {
   line-height: 1;
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------- 道路敷設 */
+
+#gradehint {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 220px;
+  padding: 10px;
+  line-height: 1.5;
+}
+
+#gradehint b {
+  display: block;
+  margin-bottom: 4px;
+}
+
+#gradehint .cost {
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+}
+
+#gradehint.bad {
+  border-color: var(--bad);
+}
+
+#gradehint.bad b {
+  color: var(--bad);
+}

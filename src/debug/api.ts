@@ -42,6 +42,16 @@ export function installDebugApi(deps: DebugDeps): void {
         loads: s.loads.map((l) => ({ ...l, foundation: game.plan?.foundations[l.coord] ?? 'none' })),
       };
     },
+    /** 道路敷設 (整地)。発注前の見積もりと、実際の発注。 */
+    gradePlan: (a: [number, number, number], b: [number, number, number]) =>
+      game.gradePlan({ x: a[0], y: a[1], z: a[2] }, { x: b[0], y: b[1], z: b[2] }),
+    grade: (a: [number, number, number], b: [number, number, number]) =>
+      game.planGrade({ x: a[0], y: a[1], z: a[2] }, { x: b[0], y: b[1], z: b[2] }),
+    /** 道路の線形 (描画に渡っているもの)。 */
+    road: () => {
+      const { cells, complete } = game.roadPath();
+      return { complete, cells: cells.length, tip: cells.at(-1) ?? null, grade: game.routeGrade() };
+    },
     togglePier: (coord: number) => game.togglePier(coord),
     cycleFoundation: (coord: number) => game.cyclePlanFoundation(coord),
     autoFoundations: () => game.autoFillFoundations(),
@@ -89,6 +99,9 @@ export function installDebugApi(deps: DebugDeps): void {
       budget: Math.round(game.economy.budget),
       time: Math.round(game.time * 10) / 10,
       connected: game.routeConnected,
+      reachable: game.routeReachable,
+      routeLength: game.routeLength,
+      grade: Math.round(game.routeGrade() * 1000) / 10,
       won: game.won,
       hazards: game.board.list.map((h) => ({ key: h.key, kind: h.kind, phase: h.phase, remaining: Math.round(h.remaining * 10) / 10, reason: h.reason })),
       bridges: game.bridges.bridges.map((b) => ({

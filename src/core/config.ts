@@ -24,6 +24,27 @@ export const WORLD = {
 export const START_CELL = { x: 4, z: 16 } as const;
 export const GOAL_CELL = { x: 59, z: 16 } as const;
 
+/**
+ * 1セルの実寸法。勾配を現実の % で語るための宣言であって、格子そのものは変えない。
+ *
+ * 縦を細かく刻む (SY を増やす) 方法もあるが、それだと「トンネルの断面は縦1セル」
+ * という前提が壊れ、支保・掘削費・掘削時間・VOID_CHECK_DEPTH・PILE_REACH・
+ * SINKHOLE_COVER・水位を全部引き直すことになる。寸法を宣言し直すだけなら、
+ * シミュレーションは1行も変わらずに勾配だけが現実の土俵に乗る。
+ */
+export const CELL_SIZE_M = { H: 8, V: 2 } as const;
+
+/**
+ * 1マス上下するのに必要な走り(マス)。これが数字その3。
+ * 勾配 = V / (H * GRADE_RUN) = 2 / (8 * 3) = 8.3%。山岳道路の上限あたり。
+ *
+ * この1つの数字が、橋とトンネルを「近道」から「そこを通る唯一の手段」に変える。
+ */
+export const GRADE_RUN = 3;
+
+/** 最急勾配 (0〜1)。表示用。 */
+export const MAX_GRADE = CELL_SIZE_M.V / (CELL_SIZE_M.H * GRADE_RUN);
+
 // ---------------------------------------------------------------- 地質
 
 /** 地盤の耐力。これが数字その1。 */
@@ -200,3 +221,66 @@ export const WATER_COLOR = 0x2f6f9e;
 /** 地質ビューのトランジション秒。 */
 export const GEO_FADE = 0.45;
 export const GEO_OPACITY = 0.82;
+
+// ---------------------------------------------------------------- 地形の見た目
+
+/**
+ * 描画の縦倍率。1セルは横8m×縦2mなので、1.0 は縦を4倍に誇張して描いていることになる。
+ * 地形図の縦断図と同じ約束事で、下げれば実寸比に近づくが起伏の迫力は落ちる。
+ */
+export const V_RENDER = 1;
+
+/** 地形の平滑化の反復回数。増やすほど滑らかだが、地形が本来の位置から離れていく。 */
+export const SMOOTH_ITERATIONS = 4;
+/** 各頂点が自分のセルの中心から離れてよい上限。マス目の予測可能性を守るための拘束。 */
+export const SMOOTH_CLAMP = 0.5;
+/**
+ * 頂点をここまで動かして曲面に乗るなら、手つかずの地表とみなして吸着させる。
+ * これより遠いものは地中や掘った跡なので触らない。
+ */
+export const SURFACE_SNAP_REACH = 0.75;
+/** 平滑化のときに隣接チャンクまで計算する余白。継ぎ目を割らないために要る。 */
+export const SMOOTH_PAD = 5;
+/** 周囲の詰まり具合から落とす陰の強さ。滑らかな面が地形に見えるかはほぼこれで決まる。 */
+export const AO_STRENGTH = 0.42;
+
+/** 等高線の濃さ。0 で消える。 */
+export const CONTOUR_STRENGTH = 0.3;
+/** 何本ごとに計曲線 (濃い線) にするか。 */
+export const CONTOUR_MAJOR = 5;
+
+// ---------------------------------------------------------------- 道路
+
+/** 車道の幅(マス)。1セル8mなので 0.8 で約6.4m = 2車線。 */
+export const ROAD_WIDTH = 0.8;
+/** 路肩の張り出し(片側・マス)。 */
+export const ROAD_SHOULDER = 0.12;
+/** 線形をこの間隔(マス)で再サンプルする。 */
+export const ROAD_SAMPLE = 0.25;
+/**
+ * 平面曲線をすりつける窓の長さ (マス)。これがそのまま曲がりの大きさになる。
+ * 大きくすると角が緩くなるが、ROAD_CORRIDOR に阻まれてそれ以上は曲がらない。
+ */
+export const ROAD_CURVE_WINDOW = 2.5;
+/** 線形が経路セルの中心から離れてよい距離(マス)。道路が地形にめり込まないための拘束。 */
+export const ROAD_CORRIDOR = 0.62;
+/**
+ * 縦断曲線をすりつける窓の長さ (マス)。
+ * 幅 W の移動平均は1マスの段差を勾配 1/W に均すので、GRADE_RUN と揃えておけば
+ * すりつけたあとの勾配が上限とほぼ一致する。
+ */
+export const ROAD_PROFILE_WINDOW = GRADE_RUN;
+/**
+ * すりつけた路面が、元の地表から離れてよい上限(マス)。
+ * これが無いと縦断曲線が谷や丘を無視して、道路が地面から浮く/潜る。
+ */
+export const ROAD_PROFILE_CLAMP = 0.5;
+/** 曲率から片勾配 (バンク) をつける係数。 */
+export const ROAD_BANK = 0.5;
+/** 路面の色と、未開通区間 (工事中) の色。 */
+export const ROAD_COLOR = 0x3a3d42;
+export const ROAD_LINE_COLOR = 0xe8e2cf;
+export const ROAD_UNBUILT_COLOR = 0xb8862f;
+
+/** 道路敷設 (整地) 1回で扱える長さ(マス)。 */
+export const GRADE_TOOL_MAX_LENGTH = 26;

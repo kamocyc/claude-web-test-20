@@ -78,6 +78,32 @@ export interface GeneratedWorld {
   heights: Float32Array;
 }
 
+/**
+ * 連続高さの bilinear サンプル。`heights` は列の中心 (x+0.5, z+0.5) の値なので、
+ * 半セルずらして引く。描画側がボクセルの丸めを取り消すのに使う。
+ */
+export function sampleHeight(
+  heights: Float32Array,
+  sx: number,
+  sz: number,
+  x: number,
+  z: number,
+): number {
+  const fx = clamp(x - 0.5, 0, sx - 1);
+  const fz = clamp(z - 0.5, 0, sz - 1);
+  const x0 = Math.floor(fx);
+  const z0 = Math.floor(fz);
+  const x1 = Math.min(x0 + 1, sx - 1);
+  const z1 = Math.min(z0 + 1, sz - 1);
+  const tx = fx - x0;
+  const tz = fz - z0;
+  const h00 = heights[x0 * sz + z0] as number;
+  const h10 = heights[x1 * sz + z0] as number;
+  const h01 = heights[x0 * sz + z1] as number;
+  const h11 = heights[x1 * sz + z1] as number;
+  return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+}
+
 export function generateWorld(seed: number = WORLD.SEED): GeneratedWorld {
   const world = new VoxelWorld(WORLD.SX, WORLD.SY, WORLD.SZ, WORLD.WATER_TABLE_Y);
   const heights = new Float32Array(WORLD.SX * WORLD.SZ);

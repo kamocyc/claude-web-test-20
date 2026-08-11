@@ -17,6 +17,13 @@ export class VoxelWorld {
   readonly mat: Uint8Array;
   readonly orig: Uint8Array;
 
+  /**
+   * 一度でも人の手が入った列。
+   * 描画側は、手つかずの列だけを worldgen の連続高さに吸着させて完全に滑らかにし、
+   * 掘った/盛った列はボクセルの形をそのまま拾う。
+   */
+  readonly columnModified: Uint8Array;
+
   /** 変更のあったセルを購読する (メッシュ再構築・構造物の再検証) */
   private listeners: CellChangeListener[] = [];
 
@@ -28,6 +35,13 @@ export class VoxelWorld {
     const n = sx * sy * sz;
     this.mat = new Uint8Array(n);
     this.orig = new Uint8Array(n);
+    this.columnModified = new Uint8Array(sx * sz);
+  }
+
+  /** その列に人の手が入っているか。 */
+  isColumnModified(x: number, z: number): boolean {
+    if (x < 0 || z < 0 || x >= this.sx || z >= this.sz) return true;
+    return this.columnModified[x * this.sz + z] === 1;
   }
 
   onCellChange(fn: CellChangeListener): void {
@@ -79,6 +93,7 @@ export class VoxelWorld {
     if (before === m && !alsoOrig) return false;
     this.mat[k] = m;
     if (alsoOrig) this.orig[k] = m;
+    this.columnModified[x * this.sz + z] = 1;
     for (const fn of this.listeners) fn(x, y, z, before, m);
     return true;
   }

@@ -17,28 +17,19 @@ interface PierPiece {
   pier: Pier;
 }
 
-/** 桁・橋脚・支保・目印・経路の描画。 */
+/** 桁・橋脚・支保・目印の描画。道路そのものは RoadView が持つ。 */
 export class StructureView {
   readonly group = new THREE.Group();
   private deckGroup = new THREE.Group();
   private pierGroup = new THREE.Group();
   private supportGroup = new THREE.Group();
-  private routeLine: THREE.Line;
 
   private decks: DeckPiece[] = [];
   private piers: PierPiece[] = [];
   private signature = '';
-  private routeSignature = '';
 
   constructor(private game: Game) {
     this.group.add(this.deckGroup, this.pierGroup, this.supportGroup);
-
-    this.routeLine = new THREE.Line(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: 0x7fe6a4, transparent: true, opacity: 0.85, depthTest: false }),
-    );
-    this.routeLine.renderOrder = 5;
-    this.group.add(this.routeLine);
 
     this.group.add(marker(game.start.x, game.start.y, game.start.z, 0x63d6ff));
     this.group.add(marker(game.goal.x, game.goal.y, game.goal.z, 0xffd166));
@@ -115,25 +106,12 @@ export class StructureView {
     }
   }
 
-  private refreshRoute(): void {
-    const path = this.game.routeConnected ? this.game.routePath() : [];
-    const sig = `${path.length}:${path[0]?.x ?? -1}:${path.at(-1)?.x ?? -1}`;
-    if (sig === this.routeSignature) return;
-    this.routeSignature = sig;
-    const pts = path.map((c) => cellToWorld(c.x, c.y, c.z).setY(c.y + 0.08));
-    this.routeLine.geometry.dispose();
-    this.routeLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
-    this.routeLine.visible = pts.length > 1;
-  }
-
   update(): void {
     const sig = this.computeSignature();
     if (sig !== this.signature) {
       this.signature = sig;
       this.rebuild();
     }
-    this.refreshRoute();
-
     // 沈下は見た目に出す。橋脚が下がり、桁がそれに引きずられて傾く。
     for (const p of this.piers) p.mesh.position.y = p.pier.baseY + 1 + Math.max(0.1, p.bridge.y - p.pier.baseY - 1) / 2 - p.pier.sink;
 

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { Game } from '../src/sim/Game.ts';
 import { Material } from '../src/core/types.ts';
-import { GRACE_SECONDS, MAX_ROUTE_LENGTH, SURVEY_COST } from '../src/core/config.ts';
+import {
+  DIG_COST,
+  FILL_COST,
+  GRACE_SECONDS,
+  GRADE_RUN,
+  GRADE_TOOL_MAX_LENGTH,
+  MAX_GRADE,
+  MAX_ROUTE_LENGTH,
+  SURVEY_COST,
+} from '../src/core/config.ts';
 import { flushJobs, giveMoney, run } from './helpers.ts';
 
 const Z = 16;
@@ -418,5 +427,128 @@ describe('尾根の越え方 (トレードオフ)', () => {
     expect(detour.weak).toBe(0); // 岩盤を狙う
     expect(detour.length).toBeGreaterThan(direct.length); // その代わり遠回り
     expect(detour.length).toBeLessThanOrEqual(MAX_ROUTE_LENGTH);
+  });
+});
+
+describe('道路敷設 (整地)', () => {
+  it('勾配条件を満たせない指定は、発注する前に断られる', () => {
+    const g = gameWithMoney();
+    const before = g.economy.budget;
+    // 5マスで3マス上がるのは無理 (3マス上がるには9マスの走りが要る)
+    const res = g.planGrade({ x: 4, y: 19, z: Z }, { x: 9, y: 22, z: Z });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain('勾配');
+    expect(g.economy.budget).toBe(before); // 一円も動かない
+    expect(g.jobs).toHaveLength(0);
+  });
+
+  it('斜めの指定は断られる (道路はまっすぐ引く)', () => {
+    const g = gameWithMoney();
+    expect(g.planGrade({ x: 4, y: 19, z: 10 }, { x: 9, y: 19, z: 14 }).ok).toBe(false);
+  });
+
+  it('長さの上限がある', () => {
+    const g = gameWithMoney();
+    const res = g.planGrade({ x: 0, y: 19, z: Z }, { x: 0 + GRADE_TOOL_MAX_LENGTH + 2, y: 19, z: Z });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain(String(GRADE_TOOL_MAX_LENGTH));
+  });
+
+  it('発注する前に、切土と盛土の量と値段が分かる', () => {
+    const g = gameWithMoney();
+    const plan = g.gradePlan({ x: 4, y: 19, z: Z }, { x: 12, y: 19, z: Z });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.length).toBe(9);
+    // 値段は既存の掘削/盛土の単価そのまま
+    let expected = 0;
+    for (const col of plan.columns) {
+      for (const y of col.dig) expected += DIG_COST[g.world.get(col.x, y, col.z)];
+      expected += col.fill.length * FILL_COST;
+    }
+    expect(plan.cost).toBe(expected);
+  });
+
+  it('敷いたあとは、その帯が勾配条件を満たす高さになる', () => {
+    const g = gameWithMoney();
+    const from = { x: 34, y: 21, z: 4 };
+    const to = { x: 46, y: 21, z: 4 };
+    const plan = g.gradePlan(from, to);
+    expect(plan.ok).toBe(true);
+    expect(g.planGrade(from, to).ok).toBe(true);
+    flushJobs(g, 600);
+    if (!plan.ok) return;
+    for (const col of plan.columns) {
+      // 路面の高さに立てる = 下が地面で、そこは空いている
+      expect(g.world.isSolid(col.x, col.target - 1, col.z)).toBe(true);
+      expect(g.world.isSolid(col.x, col.target, col.z)).toBe(false);
+    }
+  });
+
+  it('上り勾配も、上限どおりの間隔で刻まれる', () => {
+    const g = gameWithMoney();
+    const plan = g.gradePlan({ x: 4, y: 19, z: 8 }, { x: 16, y: 22, z: 8 });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const targets = plan.columns.map((c) => c.target);
+    expect(targets[0]).toBe(19);
+    expect(targets.at(-1)).toBe(22);
+    for (let i = 1; i < targets.length; i++) {
+      expect(Math.abs((targets[i] as number) - (targets[i - 1] as number))).toBeLessThanOrEqual(1);
+    }
+    // 上下したら次の GRADE_RUN-1 マスは平坦
+    for (let i = 1; i < targets.length; i++) {
+      if (targets[i] === targets[i - 1]) continue;
+      for (let k = i + 1; k < Math.min(targets.length, i + GRADE_RUN); k++) {
+        expect(targets[k]).toBe(targets[i]);
+      }
+    }
+  });
+
+  it('予算が足りなければ何も起きない', () => {
+    const g = new Game();
+    g.economy.budget = 10;
+    const res = g.planGrade({ x: 34, y: 21, z: 4 }, { x: 46, y: 21, z: 4 });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toContain('予算');
+    expect(g.jobs).toHaveLength(0);
+  });
+});
+
+describe('勾配が接続条件に入っている', () => {
+  it('素の地形では、谷を歩いて渡ることすらできない', () => {
+    const g = new Game();
+    const r = g.route();
+    expect(r.reachable).toBe(false);
+    // どこで止まっているかは分かる (工事中の道路を描くのに使う)
+    expect(r.best.length).toBeGreaterThan(1);
+    expect(r.best.at(-1)!.x).toBeLessThan(20);
+  });
+
+  it('橋とトンネルで台地の高さのまま通せば開通する', () => {
+    const g = gameWithMoney();
+    const y = 19;
+    g.planGrade({ x: g.start.x, y: g.start.y, z: Z }, { x: 12, y, z: Z });
+    flushJobs(g, 600);
+    expect(g.startPlan('truss', { x: 12, y, z: Z }, { x: 29, y, z: Z }).ok).toBe(true);
+    g.autoFillFoundations();
+    expect(g.planStatus()?.ok).toBe(true);
+    g.commitPlan();
+    flushJobs(g, 600);
+    for (let x = 30; x <= 51; x++) g.dig(x, y, Z);
+    flushJobs(g, 900);
+    for (const c of [...g.tunnels.cells.values()]) {
+      const id = c.required >= 3 ? 'steel' : c.required === 2 ? 'concrete' : c.required === 1 ? 'timber' : null;
+      if (id && c.buried) g.setSupport(c.x, c.y, c.z, id);
+    }
+    flushJobs(g, 900);
+    g.planGrade({ x: 52, y, z: Z }, { x: g.goal.x, y: g.goal.y, z: Z });
+    flushJobs(g, 600);
+
+    const r = g.route();
+    expect(r.connected).toBe(true);
+    expect(r.length).toBeLessThanOrEqual(MAX_ROUTE_LENGTH);
+    // 開通した道路は勾配上限を守っている
+    expect(g.routeGrade()).toBeLessThanOrEqual(MAX_GRADE + 1e-9);
   });
 });

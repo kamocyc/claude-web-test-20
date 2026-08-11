@@ -5,6 +5,7 @@ import { Game } from './sim/Game.ts';
 import { Scene } from './render/Scene.ts';
 import { TerrainView } from './render/TerrainView.ts';
 import { StructureView } from './render/StructureView.ts';
+import { RoadView } from './render/RoadView.ts';
 import { Effects } from './render/Effects.ts';
 import { Picker } from './render/Picker.ts';
 import { Ghost } from './render/Ghost.ts';
@@ -19,11 +20,12 @@ const game = new Game();
 const view = new Scene(canvas);
 const terrain = new TerrainView(game);
 const structures = new StructureView(game);
+const road = new RoadView(game);
 const effects = new Effects(game);
 const ghost = new Ghost();
 const picker = new Picker();
 
-view.scene.add(terrain.group, structures.group, effects.group, ghost.group);
+view.world.add(terrain.group, road.group, structures.group, effects.group, ghost.group);
 
 let tool: Tool = { kind: 'survey' };
 /** 遊び方を開いているあいだは時間を止める。 */
@@ -39,6 +41,8 @@ const hud = new Hud(uiRoot, {
     tool = t;
     anchor = null;
     ghost.setAnchor(null);
+    ghost.setGrade(null);
+    hud.setGradeHint(null);
   },
   onToggleGeology: () => {
     terrain.toggleGeology();
@@ -150,13 +154,15 @@ addEventListener('keydown', (e) => {
     game.cancelPlan();
     anchor = null;
     ghost.setAnchor(null);
+    ghost.setGrade(null);
+    hud.setGradeHint(null);
     return;
   }
   hud.selectByKey(e.key);
 });
 
 function pick(cx: number, cy: number) {
-  return picker.pick(view.camera, terrain.pickables, cx, cy, canvas);
+  return picker.pick(view.camera, game.world, cx, cy, canvas);
 }
 
 /** プラン編集中に、桁マスの座標を取り出す。 */
@@ -173,10 +179,21 @@ function updateCursor(cx: number, cy: number): void {
   const hit = pick(cx, cy);
   if (!hit) {
     ghost.setCursor(null);
+    ghost.setGrade(null);
     return;
   }
   const target = tool.kind === 'dig' || tool.kind === 'survey' ? hit.cell : hit.place;
   ghost.setCursor(target, true);
+
+  // 道路敷設は起点を置いた時点から、削る量と埋める量が見えている必要がある。
+  if (tool.kind === 'grade' && anchor) {
+    const plan = game.gradePlan(anchor, hit.place);
+    ghost.setGrade(plan);
+    hud.setGradeHint(plan);
+  } else {
+    ghost.setGrade(null);
+    hud.setGradeHint(null);
+  }
 }
 
 function act(cx: number, cy: number, shift: boolean): void {
@@ -214,6 +231,21 @@ function act(cx: number, cy: number, shift: boolean): void {
     case 'demolish':
       result = game.demolish(place.x, place.y, place.z);
       break;
+    case 'grade': {
+      if (!anchor) {
+        anchor = place;
+        ghost.setAnchor(place);
+        hud.toast('道路の起点を置いた。終点をクリック');
+        return;
+      }
+      result = game.planGrade(anchor, place);
+      if (result.ok) hud.toast(result.reason, 'good');
+      anchor = null;
+      ghost.setAnchor(null);
+      ghost.setGrade(null);
+      hud.setGradeHint(null);
+      break;
+    }
     case 'bridge': {
       if (!anchor) {
         anchor = place;
@@ -244,6 +276,7 @@ function frame(now: number): void {
 
   terrain.update(dt);
   structures.update();
+  road.update();
   effects.update(dt);
 
   const status = game.planStatus();

@@ -2,6 +2,7 @@ import { Material, isSolidMaterial } from '../core/types.ts';
 import type { Bridge, BridgeTypeId, Cell, FoundationId, SupportId } from '../core/types.ts';
 import {
   BRIDGES,
+  CELL_SIZE_M,
   DEMOLISH_COST,
   DIG_COST,
   DIG_TIME,
@@ -11,6 +12,8 @@ import {
   FOUNDATION_NAMES,
   GOAL_CELL,
   GRACE_SECONDS,
+  GRADE_RUN,
+  GRADE_TOOL_MAX_LENGTH,
   MAX_ROUTE_LENGTH,
   SINKHOLE_COVER,
   START_CELL,
@@ -20,7 +23,7 @@ import {
   WORLD,
 } from '../core/config.ts';
 import { MATERIAL_NAMES } from '../core/types.ts';
-import { generateWorld } from './worldgen.ts';
+import { generateWorld, sampleHeight } from './worldgen.ts';
 import { VoxelWorld } from './VoxelWorld.ts';
 import { TunnelSystem } from './tunnel.ts';
 import { BridgeSystem, autoPierCoords, bridgeCell, canInstallPile } from './bridge.ts';
@@ -28,8 +31,8 @@ import type { BridgePlan } from './bridge.ts';
 import { SurveySystem } from './survey.ts';
 import { Economy } from './economy.ts';
 import { HazardBoard } from './hazard.ts';
-import { findRoute } from './mission.ts';
-import type { RouteQuery } from './mission.ts';
+import { findRoute, steepestGrade } from './mission.ts';
+import type { RouteQuery, RouteResult } from './mission.ts';
 
 export interface ActionResult {
   ok: boolean;
@@ -64,11 +67,31 @@ export interface GameEvent {
   text?: string;
 }
 
+/** 道路敷設で1列に起きること。target が路面の高さ (そこに立てるようになる)。 */
+export interface GradeColumn {
+  x: number;
+  z: number;
+  target: number;
+  /** 削る y (上から) */
+  dig: number[];
+  /** 埋める y (下から) */
+  fill: number[];
+}
+
+export type GradePlanResult =
+  | { ok: true; columns: GradeColumn[]; cut: number; fill: number; cost: number; length: number }
+  | { ok: false; reason: string };
+
 /**
  * 描画から切り離したゲーム本体。テストもスモークもここを直接叩ける。
  */
 export class Game {
   readonly world: VoxelWorld;
+  /**
+   * worldgen が作った連続の地表高さ (float)。ボクセル化する前の値。
+   * 描画側は手つかずの列でこれに吸着し、階段の残らない曲面にする。
+   */
+  readonly heights: Float32Array;
   readonly tunnels: TunnelSystem;
   readonly bridges: BridgeSystem;
   readonly survey: SurveySystem;
@@ -92,6 +115,8 @@ export class Game {
   routeReachable = false;
   routeLength = 0;
   private routeTimer = 0;
+  /** 直近の探索結果。道路の描画が毎フレーム BFS を回さないためのキャッシュ。 */
+  private cachedRoute: RouteResult | null = null;
 
   readonly start: Cell;
   readonly goal: Cell;
@@ -99,6 +124,7 @@ export class Game {
   constructor(seed: number = WORLD.SEED) {
     const gen = generateWorld(seed);
     this.world = gen.world;
+    this.heights = gen.heights;
     this.tunnels = new TunnelSystem(this.world);
     this.bridges = new BridgeSystem(this.world, (x, y, z) => this.tunnels.supportLevelAt(x, y, z));
     this.survey = new SurveySystem(this.world);
@@ -126,11 +152,50 @@ export class Game {
   }
 
   route(): ReturnType<typeof findRoute> {
-    return findRoute(this.routeQuery(), this.start, this.goal, MAX_ROUTE_LENGTH);
+    return findRoute(this.routeQuery(), this.start, this.goal, {
+      maxLength: MAX_ROUTE_LENGTH,
+      gradeRun: GRADE_RUN,
+    });
   }
 
   routePath(): Cell[] {
     return this.route().path;
+  }
+
+  /**
+   * 描画に渡す線形の元。開通していれば全線、していなければ届いているところまで。
+   * 「どこで途切れているか」が常に見えるようにするための区別。
+   *
+   * 探索は毎フレームやると重いので、tick の間引きで作ったキャッシュを使う。
+   */
+  roadPath(): { cells: Cell[]; complete: boolean } {
+    const r = this.cachedRoute ?? this.route();
+    if (r.connected) return { cells: r.path, complete: true };
+    return { cells: r.best, complete: false };
+  }
+
+  /** 経路の最急勾配 (0〜1)。縦断曲線で GRADE_RUN マスに広げた実効値。 */
+  routeGrade(): number {
+    return steepestGrade(this.roadPath().cells, GRADE_RUN, CELL_SIZE_M.H, CELL_SIZE_M.V);
+  }
+
+  /** 手つかずの地形の連続高さ。描画がボクセルの丸めを取り消すのに使う。 */
+  heightAt(x: number, z: number): number {
+    return sampleHeight(this.heights, this.world.sx, this.world.sz, x, z);
+  }
+
+  /**
+   * そのセルで道路が乗る高さ。
+   *
+   * 桁の上なら桁の高さ。掘った/盛った列なら格子どおり。手つかずの地形は
+   * 平滑化でボクセルの丸めが消えているので、格子の y ではなく連続高さに合わせる。
+   * ここを間違えると路面が地面に潜ったり宙に浮いたりする。
+   */
+  roadSurfaceAt(cell: Cell): number {
+    if (this.bridges.deckAt(cell.x, cell.y, cell.z)) return cell.y;
+    if (this.bridges.deckAt(cell.x, cell.y - 1, cell.z)) return cell.y;
+    if (this.world.isColumnModified(cell.x, cell.z)) return cell.y;
+    return this.heightAt(cell.x + 0.5, cell.z + 0.5) + 1;
   }
 
   /** プレイヤーに見える地質。未調査なら null。 */
@@ -212,10 +277,21 @@ export class Game {
 
   /** 盛土。土を置くだけ。 */
   fill(x: number, y: number, z: number): ActionResult {
+    if (!this.world.isSolid(x, y - 1, z) && y > 0) return fail('足元に地面がない');
+    return this.queueFill(x, y, z);
+  }
+
+  /**
+   * 盛土を工事キューに積む。
+   *
+   * 足元の確認をここでしないのは、道路敷設のように何段も積むときに、
+   * 下の盛土がまだ「発注しただけ」の段階で上の盛土を弾いてしまうから。
+   * 下から順に積む保証は呼ぶ側が持つ。
+   */
+  private queueFill(x: number, y: number, z: number): ActionResult {
     if (!this.world.inBounds(x, y, z)) return fail('範囲外');
     if (this.world.isSolid(x, y, z)) return fail('すでに地面');
     if (this.bridges.deckAt(x, y, z)) return fail('桁がある');
-    if (!this.world.isSolid(x, y - 1, z) && y > 0) return fail('足元に地面がない');
     if (!this.economy.pay(FILL_COST)) return fail('予算不足');
     this.enqueue(`盛土 (${x},${y},${z})`, { x, y, z }, FILL_TIME, () => {
       this.world.fill(x, y, z);
@@ -239,6 +315,92 @@ export class Game {
       this.emit('built', { x, y, z }, spec.name);
     });
     return OK;
+  }
+
+  // ------------------------------------------------------------ 道路敷設 (整地)
+
+  /**
+   * 起点から終点まで、勾配条件を満たす縦断形に切り盛りする計画を立てる。
+   *
+   * 勾配上限を入れた以上、台地の細かい起伏もそのままでは道路にならない。
+   * それを1マスずつ手で均させるのは作業であって判断ではないので、まとめて発注できる
+   * ようにしてある。値段は既存の掘削/盛土の単価そのままなので、
+   * 「どこを削ってどこを盛るか」という判断だけがプレイヤーに残る。
+   */
+  gradePlan(a: Cell, b: Cell): GradePlanResult {
+    if (a.x !== b.x && a.z !== b.z) return { ok: false, reason: '道路はまっすぐ引く (縦か横)' };
+    const axis: 'x' | 'z' = a.x === b.x ? 'z' : 'x';
+    const cross = axis === 'x' ? a.z : a.x;
+    const from = axis === 'x' ? a.x : a.z;
+    const to = axis === 'x' ? b.x : b.z;
+    const len = Math.abs(to - from) + 1;
+    if (len < 2) return { ok: false, reason: '短すぎる' };
+    if (len > GRADE_TOOL_MAX_LENGTH) {
+      return { ok: false, reason: `1回に敷けるのは ${GRADE_TOOL_MAX_LENGTH} マスまで` };
+    }
+    const rise = b.y - a.y;
+    const needed = Math.abs(rise) * GRADE_RUN;
+    if (needed > len - 1) {
+      return {
+        ok: false,
+        reason: `勾配が急すぎる (${Math.abs(rise)}マス上下するには ${needed} マスの走りが要る)`,
+      };
+    }
+
+    const step = to >= from ? 1 : -1;
+    const columns: GradeColumn[] = [];
+    let cut = 0;
+    let fillCount = 0;
+    let cost = 0;
+
+    for (let i = 0; i < len; i++) {
+      const v = from + step * i;
+      const x = axis === 'x' ? v : cross;
+      const z = axis === 'x' ? cross : v;
+      const target = a.y + Math.round((rise * i) / (len - 1));
+      if (!this.world.inBounds(x, target, z)) return { ok: false, reason: '範囲外' };
+
+      const dig: number[] = [];
+      const fillYs: number[] = [];
+      // 路面より上を削る (切土)
+      for (let y = this.world.sy - 1; y >= target; y--) {
+        if (this.world.isSolid(x, y, z)) {
+          if (y <= 1) return { ok: false, reason: '岩盤まで削ることになる' };
+          dig.push(y);
+          cost += DIG_COST[this.world.get(x, y, z)];
+          cut++;
+        }
+      }
+      // 路面の下を埋める (盛土)。下から積まないと足元が無い。
+      let base = target - 1;
+      while (base >= 0 && !this.world.isSolid(x, base, z)) base--;
+      for (let y = base + 1; y <= target - 1; y++) {
+        fillYs.push(y);
+        cost += FILL_COST;
+        fillCount++;
+      }
+      columns.push({ x, z, target, dig, fill: fillYs });
+    }
+
+    return { ok: true, columns, cut, fill: fillCount, cost, length: len };
+  }
+
+  /** 計画を工事キューに積む。費用も工期も既存の掘削/盛土の単価がそのまま効く。 */
+  planGrade(a: Cell, b: Cell): ActionResult {
+    const plan = this.gradePlan(a, b);
+    if (!plan.ok) return fail(plan.reason);
+    if (this.economy.budget < plan.cost) {
+      return fail(`予算不足 (¥${plan.cost.toLocaleString()} 必要)`);
+    }
+    for (const col of plan.columns) {
+      for (const y of col.dig) this.dig(col.x, y, col.z);
+      // fill は下から順。足元の確認は gradePlan 側で済ませてある。
+      for (const y of col.fill) this.queueFill(col.x, y, col.z);
+    }
+    return {
+      ok: true,
+      reason: `道路敷設 ${plan.length}マス (切土${plan.cut} / 盛土${plan.fill} / ¥${plan.cost.toLocaleString()})`,
+    };
   }
 
   // ------------------------------------------------------------ 橋
@@ -461,6 +623,7 @@ export class Game {
     if (this.routeTimer <= 0) {
       this.routeTimer = 0.4;
       const r = this.route();
+      this.cachedRoute = r;
       this.routeConnected = r.connected;
       this.routeReachable = r.reachable;
       this.routeLength = r.length;

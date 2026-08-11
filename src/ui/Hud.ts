@@ -3,17 +3,20 @@ import { HazardPhase, MATERIAL_NAMES, Material } from '../core/types.ts';
 import type { Cell } from '../core/types.ts';
 import {
   BRIDGES,
+  CELL_SIZE_M,
   COLORS,
   FOUNDATION_NAMES,
   GRACE_SECONDS,
+  GRADE_RUN,
   GRASS_COLOR,
+  MAX_GRADE,
   MAX_ROUTE_LENGTH,
   START_BUDGET,
   SURVEY_COST,
   UNKNOWN_COLOR,
   WORLD,
 } from '../core/config.ts';
-import type { Game } from '../sim/Game.ts';
+import type { Game, GradePlanResult } from '../sim/Game.ts';
 import { bridgeCell } from '../sim/bridge.ts';
 import { hazardProgress } from '../sim/hazard.ts';
 import { cellToWorld } from '../render/Scene.ts';
@@ -73,6 +76,7 @@ export class Hud {
     this.el.budget = stat('予算');
     this.el.time = stat('経過');
     this.el.route = stat(`接続 (上限 ${MAX_ROUTE_LENGTH})`);
+    this.el.grade = stat(`勾配 (上限 ${(MAX_GRADE * 100).toFixed(1)}%)`);
     this.el.bores = stat('調査');
     this.div(top, 'spacer');
     const job = this.div(top, '', 'jobbar');
@@ -136,7 +140,11 @@ export class Hud {
       .map(([t, c]) => `<div><i style="background:${hex(c as number)}"></i>${t}</div>`)
       .join('');
     const note = this.div(right, 'legend');
-    note.innerHTML = `<div>地下水位 y=${WORLD.WATER_TABLE_Y} より下は支保レベル +1</div><div>道路として認める経路長は ${MAX_ROUTE_LENGTH} マスまで</div><div>WASD / 矢印: 視点移動 · 左ドラッグ: 回転 · ホイール: ズーム</div>`;
+    note.innerHTML = `<div>1セル = 横${CELL_SIZE_M.H}m × 縦${CELL_SIZE_M.V}m</div><div>勾配は ${(MAX_GRADE * 100).toFixed(1)}% まで — 1マス上下するのに ${GRADE_RUN} マスの走りが要る</div><div>地下水位 y=${WORLD.WATER_TABLE_Y} より下は支保レベル +1</div><div>道路として認める経路長は ${MAX_ROUTE_LENGTH} マスまで</div><div>WASD / 矢印: 視点移動 · 左ドラッグ: 回転 · ホイール: ズーム</div>`;
+
+    // ---- 道路敷設のヒント
+    this.el.gradeHint = this.div(this.root, 'panel', 'gradehint');
+    this.el.gradeHint.style.display = 'none';
 
     // ---- 警告
     const warn = this.div(this.root, 'panel', 'warnings');
@@ -185,7 +193,8 @@ export class Hud {
     this.el.vignette = this.div(this.root, '', 'vignette');
     this.el.banner = this.div(this.root, 'panel', 'banner');
 
-    this.select(this.selected);
+    // 構築中にコールバックを撃たない (呼び出し側がまだ組み上がっていない)。
+    this.highlight(this.selected);
   }
 
   /** 遊び方。初回は開いた状態で始める。 */
@@ -195,8 +204,9 @@ export class Hud {
     sheet.innerHTML = `
       <h2>谷を渡り、尾根を抜けて、START から GOAL まで道路を通す</h2>
       <div class="lead">
-        予算 ¥${START_BUDGET.toLocaleString()}。段差1で歩ける経路が ${MAX_ROUTE_LENGTH} マス以内でつながれば開通。
-        地質は最初は分からない。調べるか、勘で掘るかはあなたが決める。
+        予算 ¥${START_BUDGET.toLocaleString()}。<b>勾配 ${(MAX_GRADE * 100).toFixed(1)}% 以内</b>で通せる経路が ${MAX_ROUTE_LENGTH} マス以内でつながれば開通。
+        1セルは横${CELL_SIZE_M.H}m×縦${CELL_SIZE_M.V}mなので、<b>1マス上下するには ${GRADE_RUN} マスの走りが要る</b>。
+        だから谷は歩いて降りられない。地質は最初は分からない。調べるか、勘で掘るかはあなたが決める。
       </div>
       <div class="cols">
         <div>
@@ -205,8 +215,8 @@ export class Hud {
             <li>まず地形を見る<small>崖や谷壁は露頭なので、そこだけは掘らなくても地質の色が見える。黄色は軟弱層。</small></li>
             <li>気になる場所にボーリングを打つ (<kbd>1</kbd>)<small>1本 ¥${SURVEY_COST}。その位置の地層が縦一列だけ見えるようになる。<kbd>G</kbd> の地質ビューで確認する。</small></li>
             <li>谷に橋を架ける<small>左のパレットで橋種を選び、起点 → 終点の順にクリック。支間を満たす橋脚は自動で入るが、<b>基礎は入らない</b>。谷底は耐力0なので赤くなる。</small></li>
-            <li>尾根を抜ける<small>掘削 (<kbd>2</kbd>) で坑道を掘る。土被りがあるセルは支保 (<kbd>4</kbd>〜<kbd>6</kbd>) が要る。切土なら要らない。</small></li>
-            <li>足りない段差は盛土 (<kbd>3</kbd>) と掘削で均す<small>段差2以上は歩けない。</small></li>
+            <li>尾根を抜ける<small>掘削 (<kbd>2</kbd>) で坑道を掘る。土被りがあるセルは支保 (<kbd>5</kbd>〜<kbd>7</kbd>) が要る。切土なら要らない。</small></li>
+            <li>道路をならす<small>道路敷設 (<kbd>4</kbd>) で起点→終点を指定すると、勾配条件を満たす縦断形にまとめて切り盛りする。1マスずつやりたいときは掘削 (<kbd>2</kbd>) と盛土 (<kbd>3</kbd>)。</small></li>
           </ol>
           <h3>崩壊は必ず予告される</h3>
           <ul>
@@ -224,14 +234,21 @@ export class Hud {
             <tr><td>左ドラッグ</td><td>視点を回す</td></tr>
             <tr><td>右ドラッグ</td><td>視点を平行移動</td></tr>
             <tr><td>ホイール</td><td>ズーム</td></tr>
-            <tr><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></td><td>調査 / 掘削 / 盛土</td></tr>
-            <tr><td><kbd>4</kbd><kbd>5</kbd><kbd>6</kbd></td><td>木枠 / コンクリート覆工 / 鋼製支保+排水</td></tr>
+            <tr><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></td><td>調査 / 掘削 / 盛土 / 道路敷設</td></tr>
+            <tr><td><kbd>5</kbd><kbd>6</kbd><kbd>7</kbd></td><td>木枠 / コンクリート覆工 / 鋼製支保+排水</td></tr>
             <tr><td>左のパレット</td><td>橋 (5種) / 基礎補強 / 撤去 はボタンから選ぶ</td></tr>
             <tr><td><kbd>G</kbd></td><td>地質ビュー (右のスライダーで断面の位置)</td></tr>
             <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>建設プランの確定 / 取消</td></tr>
             <tr><td><kbd>Space</kbd></td><td>一時停止 (猶予をゆっくり見る)</td></tr>
             <tr><td><kbd>H</kbd></td><td>この画面</td></tr>
           </table>
+          <h3>道路の見方</h3>
+          <ul>
+            <li>道路は常に描かれる。<b>まだ届いていない間は工事中の色</b>で、途切れたところまで出る</li>
+            <li>上の「勾配」が今の経路の最急勾配。上限を超える線は経路として認められない</li>
+            <li>地形の薄い線は等高線。5本ごとに濃くなる</li>
+          </ul>
+
           <h3>橋を架ける手順</h3>
           <ol>
             <li>左のパレットで橋種を選び、起点の地面をクリック</li>
@@ -297,7 +314,10 @@ export class Hud {
       return { text: '1 で気になる場所にボーリングを打ち、G で地質ビューを開いてみる (勘で進めてもよい)', tone: '' };
     }
     if (!game.routeReachable) {
-      return { text: '谷を渡る手段がない — Q〜T で橋種を選び、起点と終点をクリックする', tone: '' };
+      return {
+        text: `道路として通せる線がまだ無い — 勾配は ${(MAX_GRADE * 100).toFixed(1)}% までなので、谷は橋で、尾根はトンネルか切土で越える`,
+        tone: '',
+      };
     }
     if (!game.routeConnected) {
       return {
@@ -308,10 +328,38 @@ export class Hud {
     return { text: '開通条件を満たしている。この状態を数秒保てば達成', tone: 'done' };
   }
 
+  /**
+   * 道路敷設のプレビュー中に、土量と値段を出す。
+   * 橋と同じで、発注する前に「いくらで何が起きるか」が分かっている必要がある。
+   */
+  setGradeHint(plan: GradePlanResult | null): void {
+    const el = this.el.gradeHint;
+    if (!el) return;
+    if (!plan) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+    if (!plan.ok) {
+      el.className = 'panel bad';
+      el.innerHTML = `<b>道路敷設できない</b><div>${plan.reason}</div>`;
+      return;
+    }
+    el.className = 'panel';
+    el.innerHTML =
+      `<b>道路敷設 ${plan.length} マス</b>` +
+      `<div>切土 ${plan.cut} · 盛土 ${plan.fill}</div>` +
+      `<div class="cost">¥${plan.cost.toLocaleString()}</div>`;
+  }
+
   select(tool: Tool): void {
+    this.highlight(tool);
+    this.cb.onSelect(tool);
+  }
+
+  private highlight(tool: Tool): void {
     this.selected = tool;
     for (const { def, btn } of this.toolButtons) btn.classList.toggle('active', sameTool(def.tool, tool));
-    this.cb.onSelect(tool);
   }
 
   selectByKey(key: string): boolean {
@@ -396,6 +444,9 @@ export class Hud {
       this.el.route!.textContent = '✕ 未通';
       this.el.route!.style.color = 'var(--dim)';
     }
+    const grade = game.routeGrade();
+    this.el.grade!.textContent = grade > 0 ? `${(grade * 100).toFixed(1)}%` : '—';
+    this.el.grade!.style.color = grade > MAX_GRADE + 1e-6 ? 'var(--bad)' : 'var(--ok)';
     this.el.bores!.textContent = `${game.survey.boreCount} 本`;
 
     const job = game.currentJob;

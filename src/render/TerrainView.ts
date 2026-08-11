@@ -1,6 +1,15 @@
 import * as THREE from 'three';
 import { Material } from '../core/types.ts';
-import { COLORS, GEO_FADE, GEO_OPACITY, UNKNOWN_COLOR, WORLD } from '../core/config.ts';
+import {
+  COLORS,
+  CONTOUR_MAJOR,
+  CONTOUR_STRENGTH,
+  GEO_FADE,
+  GEO_OPACITY,
+  SMOOTH_PAD,
+  UNKNOWN_COLOR,
+  WORLD,
+} from '../core/config.ts';
 import type { Game } from '../sim/Game.ts';
 import { buildChunkGeometry } from './ChunkMesher.ts';
 import type { ChunkBounds } from './ChunkMesher.ts';
@@ -25,6 +34,7 @@ export class TerrainView {
   private dirty = new Set<number>();
   private material: THREE.MeshLambertMaterial;
   private uGeoMix = { value: 0 };
+  private uContour = { value: CONTOUR_STRENGTH };
   /** 地質ビューで地面を切り開くための面。通常ビューでは世界の外に逃がしておく。 */
   private clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e4);
   private coreMaterial: THREE.MeshBasicMaterial;
@@ -61,9 +71,26 @@ export class TerrainView {
     });
     this.material.onBeforeCompile = (shader) => {
       shader.uniforms.uGeoMix = this.uGeoMix;
-      shader.vertexShader = `attribute vec3 colorGeo;\nuniform float uGeoMix;\n${shader.vertexShader}`.replace(
-        '#include <color_vertex>',
-        '#include <color_vertex>\n\tvColor.rgb = mix( vColor.rgb, colorGeo, uGeoMix );',
+      shader.uniforms.uContour = this.uContour;
+      shader.vertexShader = `attribute vec3 colorGeo;\nuniform float uGeoMix;\nvarying float vCellY;\n${shader.vertexShader}`
+        .replace(
+          '#include <color_vertex>',
+          '#include <color_vertex>\n\tvColor.rgb = mix( vColor.rgb, colorGeo, uGeoMix );',
+        )
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvCellY = position.y;');
+      // 地形を滑らかにすると高さが読めなくなるので、等高線を薄く重ねる。
+      // 地図と同じで、5本ごとに計曲線を濃くする。
+      shader.fragmentShader = `uniform float uContour;\nvarying float vCellY;\n${shader.fragmentShader}`.replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+	{
+		float e = vCellY;
+		float w = max( fwidth( e ), 1e-4 ) * 0.9;
+		float d = abs( e - floor( e + 0.5 ) );
+		float line = 1.0 - smoothstep( 0.0, w, d );
+		float major = mod( floor( e + 0.5 ), ${CONTOUR_MAJOR.toFixed(1)} ) == 0.0 ? 1.0 : 0.45;
+		diffuseColor.rgb *= 1.0 - uContour * line * major;
+	}`,
       );
     };
 
@@ -100,18 +127,18 @@ export class TerrainView {
     this.group.add(this.cores, this.slice);
   }
 
-  /** レイキャストの対象になる地形メッシュ。 */
-  get pickables(): THREE.Object3D[] {
-    return [...this.meshes.values()];
-  }
-
+  /**
+   * 1セルの変更が届く範囲だけを作り直す。平滑化が近傍に効くので、
+   * チャンクの縁の近くを触ったときだけ隣のチャンクも巻き込む。
+   */
   markDirty(x: number, z: number): void {
-    const cx = Math.floor(x / CHUNK);
-    const cz = Math.floor(z / CHUNK);
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        const ax = cx + dx;
-        const az = cz + dz;
+    const reach = SMOOTH_PAD + 1;
+    const cx0 = Math.floor((x - reach) / CHUNK);
+    const cx1 = Math.floor((x + reach) / CHUNK);
+    const cz0 = Math.floor((z - reach) / CHUNK);
+    const cz1 = Math.floor((z + reach) / CHUNK);
+    for (let ax = cx0; ax <= cx1; ax++) {
+      for (let az = cz0; az <= cz1; az++) {
         if (ax < 0 || az < 0 || ax >= this.nx || az >= this.nz) continue;
         this.dirty.add(ax * this.nz + az);
       }
@@ -155,7 +182,11 @@ export class TerrainView {
       z1: Math.min((cz + 1) * CHUNK, this.game.world.sz),
     };
     const geo = buildChunkGeometry(
-      { world: this.game.world, isKnown: (x, z) => this.game.survey.isKnown(x, z) },
+      {
+        world: this.game.world,
+        isKnown: (x, z) => this.game.survey.isKnown(x, z),
+        heightAt: (x, z) => this.game.heightAt(x, z),
+      },
       bounds,
     );
     const existing = this.meshes.get(key);
@@ -266,6 +297,8 @@ export class TerrainView {
       const step = dt / GEO_FADE;
       this.mix = target > this.mix ? Math.min(target, this.mix + step) : Math.max(target, this.mix - step);
       this.uGeoMix.value = this.mix;
+      // 地質ビューでは地層の厚みを読ませたいので、等高線を少しだけ濃くする。
+      this.uContour.value = CONTOUR_STRENGTH * (1 + 0.7 * this.mix);
       this.material.opacity = 1 - (1 - GEO_OPACITY) * this.mix;
       this.material.depthWrite = true;
     }

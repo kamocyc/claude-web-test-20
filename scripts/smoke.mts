@@ -5,6 +5,7 @@
  *   npm run build && npm run smoke
  *
  * 目的は「見た目の確認」だけでなく、設計案の主張が実際に成立しているかの確認:
+ *   - 勾配上限があるので、素の地形では谷を歩いて渡ることすらできない
  *   - 支間を超えた橋は建設前に拒否される
  *   - 無支保で軟弱層を掘ると予兆を経て崩落する
  *   - 橋脚の下を掘ると沈下し、猶予中に補強すれば戻る
@@ -43,6 +44,11 @@ interface Api {
     piers: number[];
     loads: { coord: number; isAbutment: boolean; load: number; bearing: number; ok: boolean; foundation?: string }[];
   } | null;
+  gradePlan(a: [number, number, number], b: [number, number, number]):
+    | { ok: true; columns: unknown[]; cut: number; fill: number; cost: number; length: number }
+    | { ok: false; reason: string };
+  grade(a: [number, number, number], b: [number, number, number]): { ok: boolean; reason: string };
+  road(): { complete: boolean; cells: number; tip: { x: number; y: number; z: number } | null; grade: number };
   togglePier(coord: number): unknown;
   cycleFoundation(coord: number): unknown;
   autoFoundations(): unknown;
@@ -144,8 +150,17 @@ async function main(): Promise<void> {
   check('視点移動で道具は動かない (WASD が道具に取られていない)', afterW.jobs === 0 && afterW.bores === 0);
   await page.evaluate(() => globalThis.__game.camera(-26, 60, 58, 0, 11, 0));
   await page.waitForTimeout(200);
-  const start = (await page.evaluate(() => globalThis.__game.state())) as { connected: boolean; budget: number };
+  const start = (await page.evaluate(() => globalThis.__game.state())) as {
+    connected: boolean;
+    reachable: boolean;
+    budget: number;
+  };
   check('初期状態では未通', start.connected === false);
+  // 勾配上限が入っているので、谷は「遠回りすれば歩ける」ではなく「そもそも通せない」
+  check('勾配上限があるので、素の地形では谷を渡れない', start.reachable === false);
+  const road0 = await page.evaluate(() => globalThis.__game.road());
+  check('工事中の道路が谷の手前まで描かれる', road0.complete === false && road0.cells > 1, JSON.stringify(road0));
+  check('途切れている場所が谷の手前だと分かる', (road0.tip?.x ?? 99) < 20, JSON.stringify(road0.tip));
   await shot(page, 'start');
 
   console.log('\n2. 調査 — ボーリングを打った列だけ地層が見える');
@@ -300,7 +315,35 @@ async function main(): Promise<void> {
   await page.waitForTimeout(1200);
   await shot(page, 'tunnel-supported');
 
-  console.log('\n7. 開通判定');
+  console.log('\n7. 道路敷設 (整地) — 発注する前に土量と値段が分かる');
+  const gradeEstimate = await page.evaluate(
+    ([z, y]) => globalThis.__game.gradePlan([4, y as number, z as number], [12, y as number, z as number]),
+    [Z, DECK_Y],
+  );
+  check('整地の見積もりが出る', gradeEstimate.ok === true, JSON.stringify(gradeEstimate));
+  if (gradeEstimate.ok) {
+    check('切土か盛土の量が数字で出る', gradeEstimate.cut + gradeEstimate.fill >= 0);
+    check('値段が出る', typeof gradeEstimate.cost === 'number');
+  }
+  const steep = await page.evaluate(() => globalThis.__game.gradePlan([4, 19, 8], [9, 24, 8]));
+  check('急すぎる道路は発注前に断られる', steep.ok === false, JSON.stringify(steep));
+  check('理由が勾配だと分かる', steep.ok === false && steep.reason.includes('勾配'));
+
+  const budgetBeforeGrade = ((await page.evaluate(() => globalThis.__game.state())) as { budget: number }).budget;
+  await page.evaluate(
+    ([z, y]) => {
+      const g = globalThis.__game;
+      g.grade([4, y as number, z as number], [12, y as number, z as number]);
+      g.grade([48, y as number, z as number], [59, y as number, z as number]);
+      g.flush();
+    },
+    [Z, DECK_Y],
+  );
+  await page.waitForTimeout(600);
+  const afterGrade = (await page.evaluate(() => globalThis.__game.state())) as { budget: number };
+  check('整地したぶんだけ予算が減る', afterGrade.budget <= budgetBeforeGrade);
+
+  console.log('\n8. 開通判定');
   await page.evaluate(() => {
     globalThis.__game.geology(false);
     globalThis.__game.camera(-22, 58, 52, 4, 10, 0);
@@ -311,13 +354,20 @@ async function main(): Promise<void> {
     connected: boolean;
     won: boolean;
     budget: number;
+    grade: number;
   };
   check('START から GOAL まで開通した', opened.connected === true);
   check('ミッション達成', opened.won === true);
   check('予算内に収まっている', opened.budget >= 0, String(opened.budget));
+  const road = await page.evaluate(() => globalThis.__game.road());
+  check('道路が全線つながった', road.complete === true, JSON.stringify(road));
+  check('開通した道路は勾配上限を守っている', road.grade <= 8.4, `${road.grade}%`);
   await shot(page, 'connected');
+  await page.evaluate(() => globalThis.__game.camera(-10, 26, 30, -6, 19, 0));
+  await page.waitForTimeout(900);
+  await shot(page, 'road-closeup');
 
-  console.log('\n8. 後から地面が変わると壊れる — 橋脚の下にトンネルを掘る');
+  console.log('\n9. 後から地面が変わると壊れる — 橋脚の下にトンネルを掘る');
   const pierCoord = (await page.evaluate(() => {
     const s = globalThis.__game.state() as { bridges: { piers: { coord: number; baseY: number }[] }[] };
     return s.bridges[0]!.piers[0]!;
@@ -341,7 +391,7 @@ async function main(): Promise<void> {
   check('目に見えて沈み始める', (settling.bridges[0]?.piers[0]?.sink ?? 0) > 0);
   await shot(page, 'settlement');
 
-  console.log('\n9. 覆工しても足りない — 耐力は戻るが、この橋脚の荷重には届かない');
+  console.log('\n10. 覆工しても足りない — 耐力は戻るが、この橋脚の荷重には届かない');
   const lined = (await page.evaluate(
     ([x, y, z]) => {
       const g = globalThis.__game;
@@ -357,7 +407,7 @@ async function main(): Promise<void> {
   check('それでも荷重3には足りず、警告は続く', lined.hazards.length === 1);
   await shot(page, 'lined-still-warning');
 
-  console.log('\n10. 猶予中に埋め戻せば元に戻る');
+  console.log('\n11. 猶予中に埋め戻せば元に戻る');
   const recovered = (await page.evaluate(
     ([x, y, z]) => {
       const g = globalThis.__game;

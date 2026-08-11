@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Material } from '../src/core/types.ts';
+import type { Cell } from '../src/core/types.ts';
 import { VoxelWorld } from '../src/sim/VoxelWorld.ts';
-import { findRoute, isStandable } from '../src/sim/mission.ts';
+import { findRoute, isStandable, steepestGrade } from '../src/sim/mission.ts';
 import type { RouteQuery } from '../src/sim/mission.ts';
 
 /** 平らな地面 (top y=4) の 1 列だけの世界。 */
@@ -97,5 +98,88 @@ describe('経路長の上限', () => {
     expect(far.reachable).toBe(true);
     expect(far.connected).toBe(false); // 遠回りにも値段がつく
     expect(far.length).toBe(20);
+  });
+});
+
+describe('勾配の上限', () => {
+  /**
+   * x が everyN マス進むごとに1マス上がる階段。
+   * 横に逃げ場を作らない (sz=1) ので、勾配の制限だけが効く。
+   */
+  function stairs(sx: number, everyN: number, sz = 1): VoxelWorld {
+    const w = new VoxelWorld(sx, 24, sz, 0);
+    for (let x = 0; x < sx; x++) {
+      const top = 4 + Math.floor(x / everyN);
+      for (let z = 0; z < sz; z++) {
+        for (let y = 0; y <= top; y++) w.initSet(x, y, z, Material.DIRT);
+        for (let y = top + 1; y < 24; y++) w.initSet(x, y, z, Material.AIR);
+      }
+    }
+    return w;
+  }
+
+  it('1マスごとに1マス上がる崖は、道路として認められない', () => {
+    const w = stairs(12, 1);
+    const start = { x: 0, y: 5, z: 0 };
+    const goal = { x: 11, y: 16, z: 0 };
+    // 旧ルール (段差1が連続してよい) なら通る
+    expect(findRoute(q(w), start, goal, { gradeRun: 1 }).reachable).toBe(true);
+    // 勾配ルールでは通らない
+    expect(findRoute(q(w), start, goal, { gradeRun: 3 }).reachable).toBe(false);
+  });
+
+  it('3マスに1マスの階段なら通る', () => {
+    const w = stairs(24, 3);
+    const r = findRoute(q(w), { x: 0, y: 5, z: 0 }, { x: 23, y: 12, z: 0 }, { gradeRun: 3 });
+    expect(r.reachable).toBe(true);
+    // 上下した直後は必ず平坦が続いている
+    for (let i = 1; i < r.path.length; i++) {
+      if ((r.path[i] as Cell).y === (r.path[i - 1] as Cell).y) continue;
+      for (let k = i + 1; k < Math.min(r.path.length, i + 3); k++) {
+        expect((r.path[k] as Cell).y).toBe((r.path[i] as Cell).y);
+      }
+    }
+  });
+
+  it('下り勾配にも同じ制限がかかる', () => {
+    const w = stairs(12, 1);
+    expect(findRoute(q(w), { x: 11, y: 16, z: 0 }, { x: 0, y: 5, z: 0 }, { gradeRun: 3 }).reachable).toBe(false);
+  });
+
+  it('横に逃げ場があれば、九十九折りで登れる (遠回りという値段を払って)', () => {
+    // 同じ崖でも、横に振れる幅があれば距離を稼いで登れる。現実の峠道と同じ。
+    const wide = stairs(12, 1, 5);
+    const direct = findRoute(q(stairs(12, 1)), { x: 0, y: 5, z: 0 }, { x: 11, y: 16, z: 0 }, { gradeRun: 3 });
+    const zigzag = findRoute(q(wide), { x: 0, y: 5, z: 2 }, { x: 11, y: 16, z: 2 }, { gradeRun: 3 });
+    expect(direct.reachable).toBe(false);
+    expect(zigzag.reachable).toBe(true);
+    expect(zigzag.length).toBeGreaterThan(12); // まっすぐ行くより確実に長い
+  });
+
+  it('届かないときは、一番 GOAL に近づけたところまでの線が返る', () => {
+    const w = flat();
+    // x=6 から先を掘り落として、渡れない谷にする
+    for (let x = 6; x <= 8; x++) {
+      for (let z = 0; z < 3; z++) for (let y = 0; y <= 4; y++) w.set(x, y, z, Material.AIR);
+    }
+    const r = findRoute(q(w), { x: 0, y: 5, z: 1 }, { x: 11, y: 5, z: 1 }, { gradeRun: 3 });
+    expect(r.reachable).toBe(false);
+    expect(r.path).toHaveLength(0);
+    // 工事中の道路を描くための線。谷の手前まで来ている。
+    expect(r.best.length).toBeGreaterThan(1);
+    expect(r.best.at(-1)?.x).toBe(5);
+  });
+});
+
+describe('最急勾配の表示', () => {
+  it('1マスの上下を窓ぶんに広げて測る (実際の道路の走り方に合わせる)', () => {
+    const path: Cell[] = [
+      { x: 0, y: 5, z: 0 },
+      { x: 1, y: 5, z: 0 },
+      { x: 2, y: 6, z: 0 },
+      { x: 3, y: 6, z: 0 },
+    ];
+    // 1セル = 横8m × 縦2m。3マスで1マス上がるので 2 / 24 = 8.3%
+    expect(steepestGrade(path, 3, 8, 2)).toBeCloseTo(2 / 24, 5);
   });
 });
