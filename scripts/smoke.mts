@@ -40,6 +40,7 @@ interface Api {
   commit(): void;
   cancel(): void;
   geology(on?: boolean): void;
+  help(on?: boolean): void;
   slice(z: number): void;
   focus(x: number, y: number, z: number): void;
   camera(px: number, py: number, pz: number, tx: number, ty: number, tz: number): void;
@@ -104,7 +105,14 @@ async function main(): Promise<void> {
   await page.waitForFunction(() => globalThis.__game !== undefined, null, { timeout: 30000 });
   await page.waitForTimeout(1200);
 
+  console.log('\n0. 起動直後 — 遊び方が開いた状態で始まり、時間は止まっている');
+  const opening = (await page.evaluate(() => globalThis.__game.state())) as { helpOpen: boolean };
+  check('遊び方が最初に開く', opening.helpOpen === true);
+  await shot(page, 'help');
+
   console.log('\n1. 初期状態 — 地質は不明、谷と尾根に阻まれて未通');
+  await page.evaluate(() => globalThis.__game.help(false));
+  await page.waitForTimeout(400);
   const start = (await page.evaluate(() => globalThis.__game.state())) as { connected: boolean; budget: number };
   check('初期状態では未通', start.connected === false);
   await shot(page, 'start');

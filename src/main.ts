@@ -26,10 +26,15 @@ const picker = new Picker();
 view.scene.add(terrain.group, structures.group, effects.group, ghost.group);
 
 let tool: Tool = { kind: 'survey' };
+/** 遊び方を開いているあいだは時間を止める。 */
+let pausedByUser = false;
 /** 橋の起点。2クリック目でプランになる。 */
 let anchor: Cell | null = null;
 
 const hud = new Hud(uiRoot, {
+  onHelp: (open) => {
+    game.paused = open || pausedByUser;
+  },
   onSelect: (t) => {
     tool = t;
     anchor = null;
@@ -82,9 +87,14 @@ addEventListener('keydown', (e) => {
     hud.setGeologyActive(terrain.geologyView);
     return;
   }
+  if (e.key === 'h' || e.key === 'H') {
+    hud.toggleHelp();
+    return;
+  }
   if (e.key === ' ') {
-    game.paused = !game.paused;
-    hud.toast(game.paused ? '一時停止' : '再開');
+    pausedByUser = !pausedByUser;
+    game.paused = pausedByUser;
+    hud.toast(pausedByUser ? '一時停止' : '再開');
     e.preventDefault();
     return;
   }
@@ -93,6 +103,10 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Escape') {
+    if (hud.helpOpen) {
+      hud.toggleHelp(false);
+      return;
+    }
     game.cancelPlan();
     anchor = null;
     ghost.setAnchor(null);

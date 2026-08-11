@@ -461,3 +461,159 @@ button.wide.on {
 .label.ok {
   color: var(--ok);
 }
+
+/* ---------------------------------------------------------------- 次の一手 */
+
+#objective {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  max-width: 620px;
+  padding: 7px 16px;
+  text-align: center;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#objective b {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+#objective.urgent b {
+  color: var(--bad);
+}
+
+#objective.done b {
+  color: var(--ok);
+}
+
+/* ---------------------------------------------------------------- ヘルプ */
+
+#help {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 8, 11, 0.72);
+  backdrop-filter: blur(3px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+#help.show {
+  display: flex;
+}
+
+#help .sheet {
+  position: relative;
+  width: min(880px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  padding: 22px 26px;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+#help h2 {
+  margin: 0 0 2px;
+  font-size: 19px;
+}
+
+#help .lead {
+  color: var(--dim);
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+
+#help .cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+
+@media (max-width: 720px) {
+  #help .cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+#help h3 {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  margin: 0 0 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+
+#help ol,
+#help ul {
+  margin: 0 0 16px;
+  padding-left: 18px;
+}
+
+#help li {
+  margin-bottom: 5px;
+  font-size: 13px;
+}
+
+#help li small {
+  color: var(--dim);
+  display: block;
+  font-size: 11px;
+}
+
+#help table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+#help td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+#help td:first-child {
+  width: 40%;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+#help kbd {
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 3px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#help .close {
+  margin-top: 6px;
+}
+
+#help .x {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}

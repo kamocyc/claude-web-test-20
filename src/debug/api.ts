@@ -39,6 +39,7 @@ export function installDebugApi(deps: DebugDeps): void {
     commit: () => deps.commitPlan(),
     cancel: () => game.cancelPlan(),
     setTool: (tool: Tool) => deps.setTool(tool),
+    help: (on?: boolean) => hud.toggleHelp(on),
     geology: (on?: boolean) => {
       terrain.toggleGeology(on);
       hud.setGeologyActive(terrain.geologyView);
@@ -91,6 +92,7 @@ export function installDebugApi(deps: DebugDeps): void {
       bores: game.survey.boreCount,
       jobs: game.jobs.length,
       geology: terrain.geologyView,
+      helpOpen: hud.helpOpen,
     }),
     scene: view.scene,
     terrain,

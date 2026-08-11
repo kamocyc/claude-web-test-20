@@ -30,10 +30,10 @@ export class Scene {
     this.scene.fog = new THREE.Fog(0x0e1116, 130, 330);
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.5, 600);
-    this.camera.position.set(-22, 58, 52);
+    this.camera.position.set(-26, 60, 58);
 
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.set(4, 10, 0);
+    this.controls.target.set(0, 11, 0);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.maxPolarAngle = Math.PI * 0.49;

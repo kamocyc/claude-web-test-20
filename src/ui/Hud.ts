@@ -1,7 +1,18 @@
 import * as THREE from 'three';
 import { HazardPhase, MATERIAL_NAMES, Material } from '../core/types.ts';
 import type { Cell } from '../core/types.ts';
-import { BRIDGES, COLORS, FOUNDATION_NAMES, GRASS_COLOR, MAX_ROUTE_LENGTH, UNKNOWN_COLOR, WORLD } from '../core/config.ts';
+import {
+  BRIDGES,
+  COLORS,
+  FOUNDATION_NAMES,
+  GRACE_SECONDS,
+  GRASS_COLOR,
+  MAX_ROUTE_LENGTH,
+  START_BUDGET,
+  SURVEY_COST,
+  UNKNOWN_COLOR,
+  WORLD,
+} from '../core/config.ts';
 import type { Game } from '../sim/Game.ts';
 import { bridgeCell } from '../sim/bridge.ts';
 import { hazardProgress } from '../sim/hazard.ts';
@@ -11,6 +22,7 @@ import type { Tool } from './tools.ts';
 
 export interface HudCallbacks {
   onSelect: (tool: Tool) => void;
+  onHelp: (open: boolean) => void;
   onToggleGeology: () => void;
   onSlice: (z: number) => void;
   onCommit: () => void;
@@ -85,6 +97,12 @@ export class Hud {
 
     // ---- 右
     const right = this.div(this.root, 'panel', 'right');
+    const helpBtn = document.createElement('button');
+    helpBtn.className = 'wide';
+    helpBtn.textContent = '遊び方 (H)';
+    helpBtn.addEventListener('click', () => this.toggleHelp());
+    right.appendChild(helpBtn);
+
     const geo = document.createElement('button');
     geo.className = 'wide';
     geo.textContent = '地質ビュー (G)';
@@ -146,12 +164,141 @@ export class Hud {
     row.append(commit, cancel);
     this.el.commit = commit;
 
+    // ---- 次の一手
+    const objective = this.div(this.root, 'panel', 'objective');
+    const tag = document.createElement('b');
+    tag.textContent = '次にやること';
+    const text = document.createElement('span');
+    objective.append(tag, text);
+    this.el.objective = objective;
+    this.el.objectiveText = text;
+
+    // ---- 遊び方
+    this.buildHelp();
+
     // ---- その他
     this.el.toast = this.div(this.root, '', 'toast');
     this.el.vignette = this.div(this.root, '', 'vignette');
     this.el.banner = this.div(this.root, 'panel', 'banner');
 
     this.select(this.selected);
+  }
+
+  /** 遊び方。初回は開いた状態で始める。 */
+  private buildHelp(): void {
+    const overlay = this.div(this.root, '', 'help');
+    const sheet = this.div(overlay, 'sheet');
+    sheet.innerHTML = `
+      <h2>谷を渡り、尾根を抜けて、START から GOAL まで道路を通す</h2>
+      <div class="lead">
+        予算 ¥${START_BUDGET.toLocaleString()}。段差1で歩ける経路が ${MAX_ROUTE_LENGTH} マス以内でつながれば開通。
+        地質は最初は分からない。調べるか、勘で掘るかはあなたが決める。
+      </div>
+      <div class="cols">
+        <div>
+          <h3>進め方</h3>
+          <ol>
+            <li>まず地形を見る<small>崖や谷壁は露頭なので、そこだけは掘らなくても地質の色が見える。黄色は軟弱層。</small></li>
+            <li>気になる場所にボーリングを打つ (<kbd>1</kbd>)<small>1本 ¥${SURVEY_COST}。その位置の地層が縦一列だけ見えるようになる。<kbd>G</kbd> の地質ビューで確認する。</small></li>
+            <li>谷に橋を架ける<small><kbd>Q</kbd>〜<kbd>T</kbd> で橋種を選び、起点 → 終点の順にクリック。支間と荷重を満たす橋脚・基礎が自動で提案される。</small></li>
+            <li>尾根を抜ける<small>掘削 (<kbd>2</kbd>) で坑道を掘る。土被りがあるセルは支保 (<kbd>4</kbd>〜<kbd>6</kbd>) が要る。切土なら要らない。</small></li>
+            <li>足りない段差は盛土 (<kbd>3</kbd>) と掘削で均す<small>段差2以上は歩けない。</small></li>
+          </ol>
+          <h3>崩壊は必ず予告される</h3>
+          <ul>
+            <li>支保が足りないと劣化タイマーが走り、左下に残り秒数が出る</li>
+            <li>猶予は ${GRACE_SECONDS} 秒。残り60%で予兆フェーズに入り、砂が落ち画面端が赤くなる</li>
+            <li><b>猶予のうちに直せば必ず元に戻る</b> — 支保を上げる / 埋め戻す / 基礎を補強する</li>
+            <li>警告の行をクリックすると、その場所にカメラが飛ぶ</li>
+          </ul>
+        </div>
+        <div>
+          <h3>操作</h3>
+          <table>
+            <tr><td>左クリック</td><td>選択中の道具を使う</td></tr>
+            <tr><td>左ドラッグ</td><td>視点を回す</td></tr>
+            <tr><td>右ドラッグ</td><td>視点を平行移動</td></tr>
+            <tr><td>ホイール</td><td>ズーム</td></tr>
+            <tr><td><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></td><td>調査 / 掘削 / 盛土</td></tr>
+            <tr><td><kbd>4</kbd><kbd>5</kbd><kbd>6</kbd></td><td>木枠 / コンクリート覆工 / 鋼製支保+排水</td></tr>
+            <tr><td><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><kbd>T</kbd></td><td>木橋 / コンクリート橋 / 鋼橋 / トラス橋 / 吊橋</td></tr>
+            <tr><td><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>大型基礎 / 岩着杭 / 撤去</td></tr>
+            <tr><td><kbd>G</kbd></td><td>地質ビュー (右のスライダーで断面の位置)</td></tr>
+            <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>建設プランの確定 / 取消</td></tr>
+            <tr><td><kbd>Space</kbd></td><td>一時停止 (猶予をゆっくり見る)</td></tr>
+            <tr><td><kbd>H</kbd></td><td>この画面</td></tr>
+          </table>
+          <h3>橋を架ける手順</h3>
+          <ol>
+            <li>橋種を選び、起点の地面をクリック</li>
+            <li>対岸の地面をクリック → プランになる</li>
+            <li>桁マスをクリックで橋脚を足し引き / Shift+クリックで基礎を切替</li>
+            <li>右下の表で <b>荷重 ≤ 耐力</b> を確認して <kbd>Enter</kbd></li>
+          </ol>
+          <h3>覚える数字は3つだけ</h3>
+          <table>
+            <tr><td>耐力</td><td>岩3 / 土2 / 軟弱0 (+大型基礎1 / +岩着杭3)</td></tr>
+            <tr><td>荷重</td><td>受け持つ桁マス数 ÷ 4 (切り上げ)。<b>荷重 &gt; 耐力 なら沈む</b></td></tr>
+            <tr><td>支保レベル</td><td>岩0 / 土1 / 軟弱2。地下水位より下は +1</td></tr>
+          </table>
+        </div>
+      </div>
+      <button class="wide close">閉じる (H)</button>
+      <button class="x" title="閉じる">×</button>
+    `;
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) this.toggleHelp(false);
+    });
+    for (const b of sheet.querySelectorAll('.close, .x')) {
+      b.addEventListener('click', () => this.toggleHelp(false));
+    }
+    this.el.help = overlay;
+    this.toggleHelp(true);
+  }
+
+  get helpOpen(): boolean {
+    return this.el.help!.classList.contains('show');
+  }
+
+  toggleHelp(on?: boolean): void {
+    const next = on ?? !this.helpOpen;
+    this.el.help!.classList.toggle('show', next);
+    this.cb.onHelp(next);
+  }
+
+  /**
+   * いま何をすればいいかを1行で出す。
+   * ツールが多いので、最初の数分で迷わないための道しるべ。
+   */
+  private nextStep(game: Game): { text: string; tone: '' | 'urgent' | 'done' } {
+    if (game.won) return { text: '開通。あとは自由に掘って壊して構わない', tone: 'done' };
+    if (game.board.count > 0) {
+      const h = game.board.list[0]!;
+      return {
+        text: `崩壊の予兆 (残り ${h.remaining.toFixed(0)} 秒) — ${h.kind === 'tunnel' ? '支保を上げるか埋め戻す' : '基礎を補強するか、下の空洞を埋め戻す'}`,
+        tone: 'urgent',
+      };
+    }
+    if (game.plan) {
+      const st = game.planStatus();
+      return st?.ok
+        ? { text: `Enter で確定 (¥${st.cost.toLocaleString()})。桁マスをクリックすれば橋脚を足し引きできる`, tone: 'done' }
+        : { text: `${st?.reason ?? ''} — 桁マスをクリックで橋脚を足す / Shift+クリックで基礎を上げる`, tone: 'urgent' };
+    }
+    if (game.jobs.length > 0) return { text: `施工中: ${game.currentJob?.label ?? ''}`, tone: '' };
+    if (game.survey.boreCount === 0 && game.bridges.bridges.length === 0) {
+      return { text: '1 で気になる場所にボーリングを打ち、G で地質ビューを開いてみる (勘で進めてもよい)', tone: '' };
+    }
+    if (!game.routeReachable) {
+      return { text: '谷を渡る手段がない — Q〜T で橋種を選び、起点と終点をクリックする', tone: '' };
+    }
+    if (!game.routeConnected) {
+      return {
+        text: `遠回りが長すぎる (経路 ${game.routeLength} / 上限 ${MAX_ROUTE_LENGTH}) — 尾根を掘り抜くか切り開いて近道を作る`,
+        tone: '',
+      };
+    }
+    return { text: '開通条件を満たしている。この状態を数秒保てば達成', tone: 'done' };
   }
 
   select(tool: Tool): void {
@@ -251,6 +398,10 @@ export class Hud {
     this.el.jobLabel!.textContent = job ? `${job.label}${game.jobs.length > 1 ? `  (+${game.jobs.length - 1})` : ''}` : '作業なし';
     this.el.jobLabel!.style.color = job ? 'var(--text)' : 'var(--dim)';
     this.el.jobFill!.style.width = job ? `${(1 - job.remaining / job.total) * 100}%` : '0%';
+
+    const step = this.nextStep(game);
+    this.el.objectiveText!.textContent = step.text;
+    this.el.objective!.className = `panel ${step.tone}`;
 
     this.el.sliceValue!.textContent = `z = ${sliceZ}`;
     (this.el.slider as HTMLInputElement).value = String(sliceZ);
